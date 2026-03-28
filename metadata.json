@@ -1,0 +1,5 @@
+{
+  "name": "EasyMind",
+  "description": "An AI-powered multi-agent dementia care companion for seniors and caregivers.",
+  "requestFramePermissions": ["microphone", "geolocation"]
+}

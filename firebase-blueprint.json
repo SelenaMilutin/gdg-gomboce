@@ -1,0 +1,79 @@
+{
+  "entities": {
+    "SeniorProfile": {
+      "title": "SeniorProfile",
+      "description": "Profile information for the senior",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "age": { "type": "integer" },
+        "primaryCaregiver": { "type": "string" },
+        "emergencyPhone": { "type": "string" },
+        "medications": { "type": "string" },
+        "notes": { "type": "string" },
+        "userId": { "type": "string", "description": "The UID of the senior or caregiver" }
+      },
+      "required": ["name", "userId"]
+    },
+    "Reminder": {
+      "title": "Reminder",
+      "description": "A scheduled reminder for the senior",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "icon": { "type": "string" },
+        "time": { "type": "string" },
+        "repeat": { "type": "string", "enum": ["Once", "Daily", "Weekdays", "Custom"] },
+        "agent": { "type": "string", "enum": ["daily_task", "medication"] },
+        "note": { "type": "string" },
+        "completed": { "type": "boolean" },
+        "userId": { "type": "string" }
+      },
+      "required": ["title", "time", "userId"]
+    },
+    "ActivityLogEntry": {
+      "title": "ActivityLogEntry",
+      "description": "An entry in the senior's activity log",
+      "type": "object",
+      "properties": {
+        "timestamp": { "type": "string", "format": "date-time" },
+        "agent": { "type": "string", "enum": ["orchestrator", "daily_task", "medication", "chat"] },
+        "type": { "type": "string" },
+        "outcome": { "type": "string", "enum": ["Completed", "No Response", "Emergency", "Info"] },
+        "message": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["timestamp", "agent", "type", "outcome", "userId"]
+    },
+    "Location": {
+      "title": "Location",
+      "description": "The senior's current location",
+      "type": "object",
+      "properties": {
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "lastUpdated": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["latitude", "longitude", "userId"]
+    }
+  },
+  "firestore": {
+    "/profiles/{userId}": {
+      "schema": "SeniorProfile",
+      "description": "User profiles"
+    },
+    "/reminders/{reminderId}": {
+      "schema": "Reminder",
+      "description": "Scheduled reminders"
+    },
+    "/activityLog/{logId}": {
+      "schema": "ActivityLogEntry",
+      "description": "Activity log entries"
+    },
+    "/locations/{userId}": {
+      "schema": "Location",
+      "description": "Current locations"
+    }
+  }
+}
