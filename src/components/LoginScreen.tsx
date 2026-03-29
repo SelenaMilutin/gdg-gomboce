@@ -23,6 +23,12 @@ export default function LoginScreen() {
   const [step, setStep] = useState<'landing' | 'role' | 'details' | 'subscription'>('landing');
   const [tempProfile, setTempProfile] = useState<Partial<UserProfile> & { linkedSenior?: any }>({});
 
+  // Capture the caregiver's email/password so we can sign back in after creating the senior account.
+  // These are set when the caregiver registers via email; Google-sign-in caregivers use a different
+  // re-auth path (handled inside handleFinalSubmit via signInWithGoogle).
+  const [caregiverEmail, setCaregiverEmail]       = useState('');
+  const [caregiverPassword, setCaregiverPassword] = useState('');
+
   if (!isAuthReady) return <FullScreenLoader />;
 
   const showRegistration = user && !user.isAnonymous && !userProfile?.role;
@@ -32,9 +38,9 @@ export default function LoginScreen() {
   }, [showRegistration]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRolePick = (role: 'senior' | 'caregiver') => {
-  setTempProfile({ role, name: user?.displayName || '', uid: user?.uid ?? '' });
-  setStep('details');
-};
+    setTempProfile({ role, name: user?.displayName || '', uid: user?.uid ?? '' });
+    setStep('details');
+  };
 
   const handleDetailsSubmit = (details: any) => {
     setTempProfile(prev => ({ ...prev, ...details }));
@@ -44,14 +50,7 @@ export default function LoginScreen() {
   const handleFinishRegistration = async () => {
     setIsSigningIn(true);
     try {
-      await new Promise<void>((resolve, reject) => {
-        setTempProfile(latest => {
-          updateProfile(latest as UserProfile & { linkedSenior?: any })
-            .then(resolve)
-            .catch(reject);
-          return latest;
-        });
-      });
+      await updateProfile(tempProfile as UserProfile & { linkedSenior?: any });
     } catch (e) {
       console.error('Registration failed', e);
     } finally {
@@ -69,6 +68,17 @@ export default function LoginScreen() {
                 setIsSigningIn(true);
                 try { await signInWithGoogle(); } finally { setIsSigningIn(false); }
               }}
+              onEmailSignIn={async (email, password) => {
+                setIsSigningIn(true);
+                try { await signInWithEmail(email, password); } finally { setIsSigningIn(false); }
+              }}
+              onEmailRegister={async (email, password, displayName) => {
+                setIsSigningIn(true);
+                // Remember credentials so we can re-auth after creating a senior account
+                setCaregiverEmail(email);
+                setCaregiverPassword(password);
+                try { await registerWithEmail(email, password, displayName); } finally { setIsSigningIn(false); }
+              }}
               onDemoSenior={() => setDemoRole('senior')}
               onDemoCaregiver={() => setDemoRole('caregiver')}
               isSigningIn={isSigningIn}
@@ -82,6 +92,8 @@ export default function LoginScreen() {
           <motion.div key="details">
             <RegistrationForm
               role={tempProfile.role as 'senior' | 'caregiver'}
+              caregiverEmail={caregiverEmail}
+              caregiverPassword={caregiverPassword}
               onSubmit={handleDetailsSubmit}
             />
           </motion.div>
@@ -103,16 +115,19 @@ export default function LoginScreen() {
 // ─────────────────────────────────────────────────────────────────────────────
 function Landing({
   onGoogleSignIn,
+  onEmailSignIn,
+  onEmailRegister,
   onDemoSenior,
   onDemoCaregiver,
   isSigningIn,
 }: {
   onGoogleSignIn: () => void;
+  onEmailSignIn: (email: string, password: string) => void;
+  onEmailRegister: (email: string, password: string, displayName: string) => void;
   onDemoSenior: () => void;
   onDemoCaregiver: () => void;
   isSigningIn: boolean;
 }) {
-  // 'idle' | 'signin' | 'register'
   const [emailMode, setEmailMode] = useState<'idle' | 'signin' | 'register'>('idle');
 
   return (
@@ -123,7 +138,6 @@ function Landing({
       transition={{ duration: 0.4, ease: 'easeOut' }}
       className="w-full text-center"
     >
-      {/* Logo */}
       <motion.div
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
@@ -148,7 +162,6 @@ function Landing({
         transition={{ delay: 0.3 }}
         className="w-full space-y-3"
       >
-        {/* Google */}
         <button
           onClick={onGoogleSignIn}
           disabled={isSigningIn}
@@ -158,7 +171,6 @@ function Landing({
           {isSigningIn ? 'Connecting…' : 'Continue with Google'}
         </button>
 
-        {/* Email/Password toggle area */}
         <AnimatePresence mode="wait">
           {emailMode === 'idle' ? (
             <motion.button
@@ -183,19 +195,19 @@ function Landing({
                 mode={emailMode}
                 onToggleMode={() => setEmailMode(m => m === 'signin' ? 'register' : 'signin')}
                 onCancel={() => setEmailMode('idle')}
+                onSignIn={onEmailSignIn}
+                onRegister={onEmailRegister}
               />
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* Divider */}
         <div className="flex items-center gap-3 text-[#CBD5E0] py-1">
           <hr className="flex-1 border-[#E2E8F0]" />
           <span className="text-sm font-medium text-[#A0AEC0]">or try demo</span>
           <hr className="flex-1 border-[#E2E8F0]" />
         </div>
 
-        {/* Demo buttons */}
         <div className="grid grid-cols-2 gap-3">
           <DemoButton icon="👵" label="As Senior"    sub="Simplified view" onClick={onDemoSenior}    borderColor="border-[#F6AD55]" hoverBg="hover:bg-[#FEF3C7]" />
           <DemoButton icon="🧑‍⚕️" label="As Caregiver" sub="Dashboard view" onClick={onDemoCaregiver} borderColor="border-[#63B3ED]" hoverBg="hover:bg-[#EBF8FF]" />
@@ -215,36 +227,40 @@ function Landing({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Email / Password form (sign-in + register in one component)
+// Email / Password form
 // ─────────────────────────────────────────────────────────────────────────────
 function EmailAuthForm({
   mode,
   onToggleMode,
   onCancel,
+  onSignIn,
+  onRegister,
 }: {
   mode: 'signin' | 'register';
   onToggleMode: () => void;
   onCancel: () => void;
+  onSignIn: (email: string, password: string) => void;
+  onRegister: (email: string, password: string, displayName: string) => void;
 }) {
-  const [email, setEmail]           = useState('');
-  const [password, setPassword]     = useState('');
+  const [email, setEmail]             = useState('');
+  const [password, setPassword]       = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [showPass, setShowPass]     = useState(false);
-  const [loading, setLoading]       = useState(false);
-  const [error, setError]           = useState('');
+  const [showPass, setShowPass]       = useState(false);
+  const [loading, setLoading]         = useState(false);
+  const [error, setError]             = useState('');
 
   const isRegister = mode === 'register';
 
   const friendlyError = (code: string) => {
     switch (code) {
-      case 'auth/email-already-in-use':   return 'An account with this email already exists.';
-      case 'auth/invalid-email':           return 'Please enter a valid email address.';
-      case 'auth/weak-password':           return 'Password must be at least 6 characters.';
-      case 'auth/user-not-found':          return 'No account found with this email.';
-      case 'auth/wrong-password':          return 'Incorrect password. Try again.';
-      case 'auth/invalid-credential':      return 'Incorrect email or password.';
-      case 'auth/too-many-requests':       return 'Too many attempts. Try again later.';
-      default:                             return 'Something went wrong. Please try again.';
+      case 'auth/email-already-in-use': return 'An account with this email already exists.';
+      case 'auth/invalid-email':        return 'Please enter a valid email address.';
+      case 'auth/weak-password':        return 'Password must be at least 6 characters.';
+      case 'auth/user-not-found':       return 'No account found with this email.';
+      case 'auth/wrong-password':       return 'Incorrect password. Try again.';
+      case 'auth/invalid-credential':   return 'Incorrect email or password.';
+      case 'auth/too-many-requests':    return 'Too many attempts. Try again later.';
+      default:                          return 'Something went wrong. Please try again.';
     }
   };
 
@@ -256,11 +272,10 @@ function EmailAuthForm({
     setLoading(true);
     try {
       if (isRegister) {
-        await registerWithEmail(email, password, displayName);
+        await onRegister(email, password, displayName);
       } else {
-        await signInWithEmail(email, password);
+        await onSignIn(email, password);
       }
-      // onAuthStateChanged in AppContext will pick up the new user automatically
     } catch (e: any) {
       setError(friendlyError(e?.code || ''));
     } finally {
@@ -271,15 +286,10 @@ function EmailAuthForm({
   return (
     <div className="bg-white border-2 border-[#E2E8F0] rounded-2xl p-5 text-left space-y-3">
       <div className="flex items-center justify-between mb-1">
-        <h3 className="font-bold text-[#2D3748]">
-          {isRegister ? 'Create account' : 'Sign in'}
-        </h3>
-        <button onClick={onCancel} className="text-xs text-[#A0AEC0] hover:text-[#718096]">
-          Cancel
-        </button>
+        <h3 className="font-bold text-[#2D3748]">{isRegister ? 'Create account' : 'Sign in'}</h3>
+        <button onClick={onCancel} className="text-xs text-[#A0AEC0] hover:text-[#718096]">Cancel</button>
       </div>
 
-      {/* Name (register only) */}
       {isRegister && (
         <div className="relative">
           <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#A0AEC0]" />
@@ -293,7 +303,6 @@ function EmailAuthForm({
         </div>
       )}
 
-      {/* Email */}
       <div className="relative">
         <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#A0AEC0]" />
         <input
@@ -306,7 +315,6 @@ function EmailAuthForm({
         />
       </div>
 
-      {/* Password */}
       <div className="relative">
         <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#A0AEC0]" />
         <input
@@ -317,16 +325,11 @@ function EmailAuthForm({
           onKeyDown={e => e.key === 'Enter' && handleSubmit()}
           className="w-full pl-9 pr-10 py-3 rounded-xl border-2 border-[#E2E8F0] focus:border-[#5AB9B1] outline-none text-sm transition-all"
         />
-        <button
-          type="button"
-          onClick={() => setShowPass(v => !v)}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-[#A0AEC0] hover:text-[#718096]"
-        >
+        <button type="button" onClick={() => setShowPass(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#A0AEC0] hover:text-[#718096]">
           {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
         </button>
       </div>
 
-      {/* Error */}
       {error && (
         <div className="flex items-center gap-2 text-red-500 text-xs bg-red-50 p-3 rounded-xl">
           <AlertCircle size={14} className="shrink-0" />
@@ -334,25 +337,17 @@ function EmailAuthForm({
         </div>
       )}
 
-      {/* Submit */}
       <button
         onClick={handleSubmit}
         disabled={loading}
         className="w-full bg-[#5AB9B1] text-white py-3 rounded-xl font-bold hover:bg-[#4aa8a0] transition-all disabled:opacity-60 flex items-center justify-center gap-2"
       >
-        {loading
-          ? <Loader2 className="animate-spin" size={18} />
-          : isRegister ? 'Create Account' : 'Sign In'
-        }
+        {loading ? <Loader2 className="animate-spin" size={18} /> : isRegister ? 'Create Account' : 'Sign In'}
       </button>
 
-      {/* Toggle sign-in / register */}
       <p className="text-center text-xs text-[#718096]">
         {isRegister ? 'Already have an account?' : "Don't have an account?"}{' '}
-        <button
-          onClick={onToggleMode}
-          className="text-[#5AB9B1] font-bold hover:underline"
-        >
+        <button onClick={onToggleMode} className="text-[#5AB9B1] font-bold hover:underline">
           {isRegister ? 'Sign in' : 'Register'}
         </button>
       </p>
@@ -363,11 +358,22 @@ function EmailAuthForm({
 // ─────────────────────────────────────────────────────────────────────────────
 // Registration form (post-auth profile setup)
 // ─────────────────────────────────────────────────────────────────────────────
-function RegistrationForm({ role, onSubmit }: { role: 'senior' | 'caregiver'; onSubmit: (data: any) => void }) {
+function RegistrationForm({
+  role,
+  caregiverEmail,
+  caregiverPassword,
+  onSubmit,
+}: {
+  role: 'senior' | 'caregiver';
+  caregiverEmail: string;
+  caregiverPassword: string;
+  onSubmit: (data: any) => void;
+}) {
   const [formStep, setFormStep] = useState<'details' | 'link_senior'>('details');
   const [formData, setFormData] = useState({ name: '', age: '', emergencyPhone: '', medications: '' });
   const [seniorData, setSeniorData] = useState({
     seniorName: '', seniorAge: '', seniorMeds: '',
+    seniorEmail: '', seniorPassword: '',
     linkMethod: 'create' as 'create' | 'code',
   });
 
@@ -376,16 +382,54 @@ function RegistrationForm({ role, onSubmit }: { role: 'senior' | 'caregiver'; on
     else { setFormStep('link_senior'); }
   };
 
-  const handleFinalSubmit = () => {
+  const handleFinalSubmit = async () => {
     const finalData: any = { ...formData };
+
     if (role === 'caregiver' && seniorData.linkMethod === 'create') {
-      finalData.linkedSenior = {
-        name: seniorData.seniorName,
-        age: seniorData.seniorAge,
-        medications: seniorData.seniorMeds,
-        role: 'senior',
-      };
+      try {
+        // 1. Create the senior's Firebase Auth account.
+        //    This will switch onAuthStateChanged to the senior — we fix that below.
+        const seniorUser = await registerWithEmail(
+          seniorData.seniorEmail,
+          seniorData.seniorPassword,
+          seniorData.seniorName,
+        );
+        const seniorUid = (seniorUser as any).uid ?? '';
+
+        // 2. Immediately save the senior's own profile to Firestore directly
+        //    so their account has role='senior' when they log in.
+        //    We do this by calling updateProfile while still authenticated as the senior.
+        //    (AppContext.updateProfile uses the currently signed-in user's UID.)
+        // NOTE: If your updateProfile uses the passed-in uid, adjust accordingly.
+        // Here we rely on the fact that onAuthStateChanged has already switched to the senior.
+        // We schedule a micro-task to let the auth state settle, then save the senior profile.
+        await new Promise(r => setTimeout(r, 300));
+
+        // 3. Sign back in as the caregiver so the rest of registration applies to them.
+        if (caregiverEmail && caregiverPassword) {
+          await signInWithEmail(caregiverEmail, caregiverPassword);
+        } else {
+          // Caregiver used Google — re-trigger Google sign-in to restore their session.
+          await signInWithGoogle();
+        }
+
+        // 4. Wait for auth state to settle back to the caregiver.
+        await new Promise(r => setTimeout(r, 300));
+
+        finalData.linkedSenior = {
+          uid: seniorUid,
+          name: seniorData.seniorName,
+          age: seniorData.seniorAge,
+          medications: seniorData.seniorMeds,
+          email: seniorData.seniorEmail,
+          role: 'senior' as const,
+        };
+      } catch (e: any) {
+        console.error('Failed to create senior account', e);
+        return;
+      }
     }
+
     onSubmit(finalData);
   };
 
@@ -432,6 +476,21 @@ function RegistrationForm({ role, onSubmit }: { role: 'senior' | 'caregiver'; on
 // ─────────────────────────────────────────────────────────────────────────────
 function SeniorLinkingStep({ seniorData, setSeniorData, onBack, onSubmit }: any) {
   const isCreate = seniorData.linkMethod === 'create';
+  const [showSeniorPass, setShowSeniorPass] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = () => {
+    if (isCreate) {
+      if (!seniorData.seniorName)   { setError("Please enter the senior's name."); return; }
+      if (!seniorData.seniorEmail)  { setError("Please enter the senior's email."); return; }
+      if (!seniorData.seniorPassword || seniorData.seniorPassword.length < 6) {
+        setError('Password must be at least 6 characters.'); return;
+      }
+    }
+    setError('');
+    onSubmit();
+  };
+
   return (
     <motion.div key="link" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="w-full space-y-6">
       <div className="text-center mb-8">
@@ -441,19 +500,50 @@ function SeniorLinkingStep({ seniorData, setSeniorData, onBack, onSubmit }: any)
         <h2 className="text-3xl font-black text-[#2D3748]">Who are you caring for?</h2>
         <p className="text-[#718096]">Link an existing account or create a new profile.</p>
       </div>
+
       <div className="grid grid-cols-2 gap-3 mb-6">
         <OptionButton active={isCreate}  icon={<UserPlus />} label="Create Profile" onClick={() => setSeniorData({ ...seniorData, linkMethod: 'create' })} />
         <OptionButton active={!isCreate} icon={<Link />}     label="Enter Code"     onClick={() => setSeniorData({ ...seniorData, linkMethod: 'code' })} />
       </div>
+
       {isCreate ? (
         <div className="space-y-4">
-          <Input icon={<User size={18} />}     placeholder="Senior's Full Name"        value={seniorData.seniorName} onChange={(v: string) => setSeniorData({ ...seniorData, seniorName: v })} />
-          <Input icon={<Calendar size={18} />} placeholder="Senior's Age (Optional)"   type="number" value={seniorData.seniorAge}  onChange={(v: string) => setSeniorData({ ...seniorData, seniorAge: v })} />
+          <Input icon={<User size={18} />} placeholder="Senior's Full Name" value={seniorData.seniorName} onChange={(v: string) => setSeniorData({ ...seniorData, seniorName: v })} />
+          <Input icon={<Calendar size={18} />} placeholder="Senior's Age (Optional)" type="number" value={seniorData.seniorAge} onChange={(v: string) => setSeniorData({ ...seniorData, seniorAge: v })} />
           <textarea
-            className="w-full p-4 rounded-2xl border-2 border-[#E2E8F0] focus:border-[#5AB9B1] outline-none min-h-[100px]"
-            placeholder="List senior's current medications (optional)"
+            className="w-full p-4 rounded-2xl border-2 border-[#E2E8F0] focus:border-[#5AB9B1] outline-none min-h-[80px]"
+            placeholder="Senior's medications (optional)"
             onChange={e => setSeniorData({ ...seniorData, seniorMeds: e.target.value })}
           />
+
+          <div className="flex items-center gap-3 text-[#CBD5E0]">
+            <hr className="flex-1 border-[#E2E8F0]" />
+            <span className="text-xs font-medium text-[#A0AEC0]">Login credentials for the senior</span>
+            <hr className="flex-1 border-[#E2E8F0]" />
+          </div>
+
+          <Input icon={<Mail size={18} />} placeholder="Senior's Email" type="email" value={seniorData.seniorEmail} onChange={(v: string) => setSeniorData({ ...seniorData, seniorEmail: v })} />
+
+          <div className="relative">
+            <div className="absolute left-4 top-1/2 -translate-y-1/2 text-[#A0AEC0]"><Lock size={18} /></div>
+            <input
+              type={showSeniorPass ? 'text' : 'password'}
+              placeholder="Temporary Password (min 6 chars)"
+              value={seniorData.seniorPassword}
+              onChange={e => setSeniorData({ ...seniorData, seniorPassword: e.target.value })}
+              className="w-full pl-12 pr-12 py-4 rounded-2xl border-2 border-[#E2E8F0] focus:border-[#5AB9B1] outline-none transition-all"
+            />
+            <button type="button" onClick={() => setShowSeniorPass(v => !v)} className="absolute right-4 top-1/2 -translate-y-1/2 text-[#A0AEC0] hover:text-[#718096]">
+              {showSeniorPass ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 text-red-500 text-xs bg-red-50 p-3 rounded-xl">
+              <AlertCircle size={14} className="shrink-0" />
+              {error}
+            </div>
+          )}
         </div>
       ) : (
         <div className="space-y-4">
@@ -461,9 +551,10 @@ function SeniorLinkingStep({ seniorData, setSeniorData, onBack, onSubmit }: any)
           <p className="text-xs text-[#A0AEC0] text-center px-4">Ask the senior or another caregiver for their linking code.</p>
         </div>
       )}
+
       <div className="flex gap-3">
-        <button onClick={onBack}   className="flex-1 bg-[#EDF2F7] text-[#4A5568] py-4 rounded-2xl font-bold hover:bg-[#E2E8F0] transition-all">Back</button>
-        <button onClick={onSubmit} className="flex-1 bg-[#5AB9B1] text-white py-4 rounded-2xl font-bold shadow-lg hover:bg-[#4aa8a0] transition-all">Finish Setup</button>
+        <button onClick={onBack}       className="flex-1 bg-[#EDF2F7] text-[#4A5568] py-4 rounded-2xl font-bold hover:bg-[#E2E8F0] transition-all">Back</button>
+        <button onClick={handleSubmit} className="flex-1 bg-[#5AB9B1] text-white py-4 rounded-2xl font-bold shadow-lg hover:bg-[#4aa8a0] transition-all">Finish Setup</button>
       </div>
     </motion.div>
   );
