@@ -203,7 +203,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // ── Activity log ──────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!targetUserId || isAnon) { setActivityLog([]); return; }
+    if (!targetUserId) { setActivityLog([]); return; }
+    if (isAnon && targetUserId !== SHARED_DEMO_ID) { setActivityLog([]); return; }
     const q = query(collection(db, 'activityLog'), where('userId', '==', targetUserId));
     const unsub = onSnapshot(
       q,
@@ -227,7 +228,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // ── Location (read from Firestore) ────────────────────────────────────────
   useEffect(() => {
-    if (!targetUserId || isAnon) { setCurrentLocationState(null); return; }
+    if (!targetUserId) { setCurrentLocationState(null); return; }
+    if (isAnon && targetUserId !== SHARED_DEMO_ID) { setCurrentLocationState(null); return; }
     const unsub = onSnapshot(
       doc(db, 'locations', targetUserId),
       (snap) => {
