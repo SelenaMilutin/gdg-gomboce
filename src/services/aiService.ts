@@ -16,6 +16,11 @@ if (typeof window !== "undefined") {
 
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
+export interface CaregiverRecap {
+  recap: string;
+  conclusion: string;
+}
+
 export async function callGemini(
   systemInstruction: string,
   userMessage: string,
@@ -135,7 +140,73 @@ Compose a warm, reassuring reminder. Mention specific pill colors or instruction
 Based on the activity log: {{log}}
 Provide a concise, empathetic summary of the senior's day so far for the family caregiver.
 Suggest actions if necessary.`,
+
+  CAREGIVER_RECAP: `You are the EasyMind Caregiver Recap Agent.
+Use ONLY the provided activity log context.
+
+Return JSON only in this exact shape:
+{
+  "recap": "2-3 short sentences summarizing key events",
+  "conclusion": "One clear conclusion with one practical next step"
+}
+
+Keep it calm, practical, and empathetic.
+Do not include markdown formatting in values (no **, *, or headings).`,
 };
+
+function stripJsonCodeFences(raw: string): string {
+  return raw.replace(/```json\n?|```/g, "").trim();
+}
+
+function buildLogContext(log: ActivityLogEntry[], limit = 10): string {
+  if (!log.length) {
+    return "No activity events recorded yet today.";
+  }
+
+  return log
+    .slice(0, limit)
+    .map(
+      (entry) =>
+        `${entry.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} | ${entry.type} | ${entry.outcome} | ${entry.message || "No message"}`
+    )
+    .join("\n");
+}
+
+export async function generateCaregiverRecap(log: ActivityLogEntry[]): Promise<CaregiverRecap> {
+  const logContext = buildLogContext(log, 12);
+  const systemInstruction = `${AGENT_PROMPTS.CAREGIVER_RECAP}\n\nActivity log:\n${logContext}`;
+
+  const response = await callGemini(
+    systemInstruction,
+    "Create a short recap and conclusion for the caregiver.",
+    [],
+    "application/json"
+  );
+
+  try {
+    const parsed = JSON.parse(stripJsonCodeFences(response)) as Partial<CaregiverRecap>;
+    return {
+      recap: parsed.recap?.trim() || "No meaningful recap was generated from the current log.",
+      conclusion: parsed.conclusion?.trim() || "Continue monitoring and check in again after the next reminder window.",
+    };
+  } catch (error) {
+    console.error("Failed to parse caregiver recap response:", error);
+
+    const completedCount = log.filter((item) => item.outcome === "Completed").length;
+    const missedCount = log.filter((item) => item.outcome === "No Response").length;
+    const emergencyCount = log.filter((item) => item.outcome === "Emergency").length;
+
+    return {
+      recap: `Today\'s log has ${log.length} events: ${completedCount} completed, ${missedCount} missed, and ${emergencyCount} emergency alerts.`,
+      conclusion:
+        emergencyCount > 0
+          ? "At least one emergency was recorded. Please contact the senior now and verify immediate safety."
+          : missedCount > 0
+            ? "There were missed interactions. A direct check-in call is recommended in the next hour."
+            : "Overall trend appears stable. Continue with normal monitoring and reminders.",
+    };
+  }
+}
 
 export async function routeRequest(
   profile: UserProfile,

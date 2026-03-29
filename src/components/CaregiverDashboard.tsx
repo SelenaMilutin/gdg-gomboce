@@ -11,7 +11,7 @@ import {
   CheckCircle2, AlertCircle, PhoneCall, Info,
   Plus, ChevronRight, MessageSquare, MapPin, Trash2, Loader2
 } from 'lucide-react';
-import { callGemini, AGENT_PROMPTS } from '../services/aiService';
+import { callGemini, generateCaregiverRecap } from '../services/aiService';
 import { db, deleteDoc, doc, handleFirestoreError, OperationType, addDoc, collection } from '../firebase';
 import LocationMap from './LocationMap';
 
@@ -412,18 +412,27 @@ function AddReminderModal({ onClose }: { onClose: () => void }) {
 
 function AISummaryTab() {
   const { activityLog, linkedSeniorProfile } = useApp();
-  const [summary, setSummary] = useState<string>('');
+  const [summary, setSummary] = useState<{ recap: string; conclusion: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [chatInput, setChatInput] = useState('');
   const [chatResponse, setChatResponse] = useState('');
 
+  const normalizeAiText = (raw: string) => {
+    return raw
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/^\s*[\-*]\s+/gm, '• ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  };
+
   useEffect(() => {
     const fetchSummary = async () => {
-      const logContext = activityLog.slice(0, 5).map(l => `${l.timestamp.toLocaleTimeString()}: ${l.type} - ${l.outcome}`).join('\n');
-      const response = await callGemini(AGENT_PROMPTS.SUMMARY.replace('{{log}}', logContext), "Summarize the day so far.");
+      setLoading(true);
+      const response = await generateCaregiverRecap(activityLog);
       setSummary(response);
       setLoading(false);
     };
+
     fetchSummary();
   }, [activityLog]);
 
@@ -431,12 +440,28 @@ function AISummaryTab() {
     e.preventDefault();
     if (!chatInput.trim()) return;
     setLoading(true);
-    const logContext = activityLog.map(l => `${l.timestamp.toLocaleTimeString()}: ${l.type} - ${l.outcome}`).join('\n');
+    const logContext = activityLog.length
+      ? activityLog
+          .slice(0, 20)
+          .map(
+            l =>
+              `${l.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} | ${l.type} | ${l.outcome} | ${l.message || 'No message'}`
+          )
+          .join('\n')
+      : 'No activity events are available in database for this senior yet.';
+
     const response = await callGemini(
-      `You are the EasyMind Caregiver Assistant. Use this log to answer questions: ${logContext}`,
+      `You are the EasyMind Caregiver Assistant.
+Use only the activity log context below (pulled from the app database) to answer.
+Do not ask the caregiver to provide logs manually.
+If context is empty, state that clearly and give one practical next step.
+Format as clean plain text with short sections. Do not use markdown symbols like **, #, or *.
+
+Activity log context:
+${logContext}`,
       chatInput
     );
-    setChatResponse(response);
+    setChatResponse(normalizeAiText(response));
     setChatInput('');
     setLoading(false);
   };
@@ -454,7 +479,9 @@ function AISummaryTab() {
             <div className="h-4 bg-white/20 rounded w-1/2"></div>
           </div>
         ) : (
-          <p className="text-sm leading-relaxed opacity-90">{summary}</p>
+          <p className="text-sm leading-relaxed opacity-90">
+            {summary ? `${summary.recap} Conclusion: ${summary.conclusion}` : ''}
+          </p>
         )}
       </div>
 
@@ -465,7 +492,7 @@ function AISummaryTab() {
         </h3>
         
         {chatResponse && (
-          <div className="mb-4 p-4 bg-[#F7FAFC] rounded-2xl text-sm border border-[#EDF2F7]">
+          <div className="mb-4 p-4 bg-[#F7FAFC] rounded-2xl text-sm border border-[#EDF2F7] whitespace-pre-line leading-relaxed">
             {chatResponse}
           </div>
         )}
