@@ -1,16 +1,42 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, FirebaseError } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, addDoc, updateDoc, deleteDoc, Timestamp, getDocFromServer } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
 
-// Initialize Firebase SDK
+const env = import.meta.env;
+
+const firebaseConfig = {
+  apiKey: env.VITE_API_KEY,
+  authDomain: env.VITE_AUTH_DOMAIN,
+  projectId: env.VITE_PROJECT_ID,
+  storageBucket: env.VITE_STORAGE_BUCKET,
+  messagingSenderId: env.VITE_MESSAGING_SENDER_ID,
+  appId: env.VITE_APP_ID
+};
+
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = getFirestore(app, 'radi-molim-te');
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
 // Auth Helpers
-export const signInWithGoogle = () => signInWithPopup(auth, googleProvider);
+export const signInWithGoogle = async () => {
+  try {
+    // If already signed in, don't trigger another popup
+    if (auth.currentUser) return { user: auth.currentUser };
+    
+    return await signInWithPopup(auth, googleProvider);
+  } catch (error: any) {
+    const errorCode = error?.code;
+    
+    if (errorCode === 'auth/cancelled-popup-request' || errorCode === 'auth/popup-closed-by-user') {
+      // These are normal user actions, we can just ignore them
+      return null;
+    }
+    
+    console.error("Error signing in with Google:", error);
+    throw error;
+  }
+};
 export const logout = () => signOut(auth);
 
 // Error Handling Helper

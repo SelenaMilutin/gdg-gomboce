@@ -9,14 +9,38 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Activity, Calendar, Sparkles, Bell, 
   CheckCircle2, AlertCircle, PhoneCall, Info,
-  Plus, ChevronRight, MessageSquare, MapPin, Trash2
+  Plus, ChevronRight, MessageSquare, MapPin, Trash2, Loader2
 } from 'lucide-react';
 import { callGemini, AGENT_PROMPTS } from '../services/aiService';
 import { db, deleteDoc, doc, handleFirestoreError, OperationType, addDoc, collection } from '../firebase';
 
 export default function CaregiverDashboard() {
   const [activeTab, setActiveTab] = useState<'log' | 'routine' | 'ai' | 'location'>('log');
-  const { seniorProfile, activityLog } = useApp();
+  const { userProfile, linkedSeniorProfile, activityLog, updateProfile, user, setDemoRole, setUserProfile } = useApp();
+  const [isUnlinking, setIsUnlinking] = useState(false);
+
+  const handleSwitchSenior = async () => {
+    setIsUnlinking(true);
+    try {
+      if (!user) {
+        setDemoRole('caregiver');
+        setUserProfile({
+          uid: 'demo-user-id',
+          name: 'Demo User',
+          role: 'caregiver',
+          linkedSeniorId: undefined
+        });
+      } else {
+        await updateProfile({ linkedSeniorId: undefined });
+      }
+    } finally {
+      setIsUnlinking(false);
+    }
+  };
+
+  if (!userProfile?.linkedSeniorId || !linkedSeniorProfile) {
+    return <LinkSeniorUI />;
+  }
 
   const unreadAlerts = activityLog.filter(l => l.outcome === 'Emergency' || l.outcome === 'No Response').length;
 
@@ -26,11 +50,19 @@ export default function CaregiverDashboard() {
       <header className="bg-white p-6 shadow-sm sticky top-0 z-10">
         <div className="flex justify-between items-center max-w-4xl mx-auto">
           <div className="flex items-center gap-4">
+            <button 
+              onClick={handleSwitchSenior}
+              disabled={isUnlinking}
+              className="p-2 text-[#718096] hover:text-[#5AB9B1] transition-colors"
+              title="Switch Senior"
+            >
+              {isUnlinking ? <Loader2 className="animate-spin" size={20} /> : <ChevronRight className="rotate-180" size={20} />}
+            </button>
             <div className="w-12 h-12 bg-[#5AB9B1] rounded-full flex items-center justify-center text-white font-bold text-xl">
-              {seniorProfile.name[0]}
+              {linkedSeniorProfile?.name?.[0] || 'S'}
             </div>
             <div>
-              <h1 className="font-bold text-lg">{seniorProfile.name}</h1>
+              <h1 className="font-bold text-lg">{linkedSeniorProfile?.name || 'Senior Profile'}</h1>
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
                 <span className="text-xs text-[#718096]">Last active 12 min ago</span>
@@ -89,7 +121,7 @@ export default function CaregiverDashboard() {
 }
 
 function LocationTab() {
-  const { currentLocation, seniorProfile } = useApp();
+  const { currentLocation, linkedSeniorProfile } = useApp();
 
   if (!currentLocation) {
     return (
@@ -120,7 +152,7 @@ function LocationTab() {
               <MapPin size={24} />
             </motion.div>
             <div className="mt-4 bg-white px-4 py-2 rounded-full shadow-md text-sm font-bold">
-              {seniorProfile.name.split(' ')[0]} is here
+              {linkedSeniorProfile?.name?.split(' ')[0] || 'Senior'} is here
             </div>
           </div>
         </div>
@@ -153,7 +185,7 @@ function LocationTab() {
         <div>
           <h4 className="font-bold text-amber-800 text-sm mb-1">Safety Tip</h4>
           <p className="text-xs text-amber-700 leading-relaxed">
-            Location is updated every minute. If you notice unusual movement or the location hasn't updated in a while, consider calling {seniorProfile.name.split(' ')[0]} or their emergency contact.
+            Location is updated every minute. If you notice unusual movement or the location hasn't updated in a while, consider calling {linkedSeniorProfile?.name?.split(' ')[0] || 'Senior'} or their emergency contact.
           </p>
         </div>
       </div>
@@ -264,28 +296,13 @@ const LogEntry: React.FC<{ entry: any }> = ({ entry }) => {
 };
 
 function RoutineCalendar() {
-  const { reminders, user } = useApp();
-  const [view, setView] = useState<'Day' | 'Week'>('Day');
+  const { reminders, addReminder, deleteReminder } = useApp();
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-bold">Routine</h2>
-        <div className="bg-white rounded-lg p-1 border border-[#E2E8F0] flex gap-1">
-          <button 
-            onClick={() => setView('Day')}
-            className={`px-3 py-1 text-xs font-bold rounded ${view === 'Day' ? 'bg-[#5AB9B1] text-white' : 'text-[#718096]'}`}
-          >
-            Day
-          </button>
-          <button 
-            onClick={() => setView('Week')}
-            className={`px-3 py-1 text-xs font-bold rounded ${view === 'Week' ? 'bg-[#5AB9B1] text-white' : 'text-[#718096]'}`}
-          >
-            Week
-          </button>
-        </div>
       </div>
 
       <div className="space-y-4">
@@ -300,13 +317,7 @@ function RoutineCalendar() {
               <span className="font-mono font-bold text-[#5AB9B1]">{r.time}</span>
               <button 
                 onClick={async () => {
-                  if (confirm(`Delete ${r.title}?`)) {
-                    try {
-                      await deleteDoc(doc(db, 'reminders', r.id));
-                    } catch (e) {
-                      handleFirestoreError(e, OperationType.DELETE, `reminders/${r.id}`);
-                    }
-                  }
+                  await deleteReminder(r.id);
                 }}
                 className="p-2 text-[#CBD5E0] hover:text-[#E53E3E] transition-colors"
                 title="Delete Reminder"
@@ -335,32 +346,20 @@ function RoutineCalendar() {
 }
 
 function AddReminderModal({ onClose }: { onClose: () => void }) {
-  const { user } = useApp();
+  const { addReminder } = useApp();
   const [formData, setFormData] = useState({
     title: '',
     time: '08:00',
     icon: '💊',
-    repeat: 'Daily',
-    agent: 'medication',
+    repeat: 'Daily' as const,
+    agent: 'medication' as const,
     note: ''
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) {
-      alert('Please sync data first to add reminders.');
-      return;
-    }
-    try {
-      await addDoc(collection(db, 'reminders'), {
-        ...formData,
-        userId: user.uid,
-        completed: false
-      });
-      onClose();
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, 'reminders');
-    }
+    await addReminder(formData);
+    onClose();
   };
 
   return (
@@ -400,20 +399,33 @@ function AddReminderModal({ onClose }: { onClose: () => void }) {
               />
             </div>
             <div>
-              <label className="block text-xs font-bold text-[#718096] uppercase mb-1">Icon</label>
+              <label className="block text-xs font-bold text-[#718096] uppercase mb-1">Repeat</label>
               <select 
-                value={formData.icon}
-                onChange={e => setFormData({...formData, icon: e.target.value})}
+                value={formData.repeat}
+                onChange={e => setFormData({...formData, repeat: e.target.value as any})}
                 className="w-full p-3 rounded-xl border border-[#E2E8F0] outline-none focus:ring-2 focus:ring-[#5AB9B1]"
               >
-                <option>💊</option>
-                <option>🍽️</option>
-                <option>🐱</option>
-                <option>🚶</option>
-                <option>💧</option>
-                <option>🍎</option>
+                <option value="Daily">Every Day</option>
+                <option value="Weekly">Weekly</option>
+                <option value="Monthly">Monthly</option>
+                <option value="Once">Once</option>
               </select>
             </div>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-[#718096] uppercase mb-1">Icon</label>
+            <select 
+              value={formData.icon}
+              onChange={e => setFormData({...formData, icon: e.target.value})}
+              className="w-full p-3 rounded-xl border border-[#E2E8F0] outline-none focus:ring-2 focus:ring-[#5AB9B1]"
+            >
+              <option>💊</option>
+              <option>🍽️</option>
+              <option>🐱</option>
+              <option>🚶</option>
+              <option>💧</option>
+              <option>🍎</option>
+            </select>
           </div>
           <div className="flex gap-4 pt-4">
             <button 
@@ -437,7 +449,7 @@ function AddReminderModal({ onClose }: { onClose: () => void }) {
 }
 
 function AISummaryTab() {
-  const { activityLog, seniorProfile } = useApp();
+  const { activityLog, linkedSeniorProfile } = useApp();
   const [summary, setSummary] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [chatInput, setChatInput] = useState('');
@@ -487,7 +499,7 @@ function AISummaryTab() {
       <div className="bg-white p-6 rounded-[32px] shadow-sm border border-[#E2E8F0]">
         <h3 className="font-bold mb-4 flex items-center gap-2">
           <MessageSquare size={18} className="text-[#5AB9B1]" />
-          Ask about {seniorProfile.name.split(' ')[0]}
+          Ask about {linkedSeniorProfile?.name?.split(' ')[0] || 'Senior'}
         </h3>
         
         {chatResponse && (
@@ -501,7 +513,7 @@ function AISummaryTab() {
             type="text" 
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
-            placeholder="How has she been today?"
+            placeholder={`How has ${linkedSeniorProfile?.name?.split(' ')[0] || 'Senior'} been today?`}
             className="w-full pl-4 pr-12 py-3 rounded-xl border border-[#E2E8F0] outline-none focus:ring-2 focus:ring-[#5AB9B1] text-sm"
           />
           <button 
@@ -513,5 +525,88 @@ function AISummaryTab() {
         </form>
       </div>
     </motion.div>
+  );
+}
+
+function LinkSeniorUI() {
+  const { linkSenior, seniorsList, user, setDemoRole, setUserProfile } = useApp();
+  const [loading, setLoading] = useState<string | null>(null);
+  const [error, setError] = useState('');
+
+  const handleLink = async (senior: any) => {
+    setLoading(senior.uid);
+    setError('');
+    try {
+      if (!user) {
+        // Demo mode: update local profile to link to this senior
+        setDemoRole('caregiver');
+        setUserProfile({
+          uid: 'demo-user-id',
+          name: 'Demo User',
+          role: 'caregiver',
+          linkedSeniorId: senior.uid
+        });
+      } else {
+        await linkSenior(senior.uid);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to link senior');
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#F7FAFC] flex flex-col items-center justify-center p-6">
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-2xl">
+        <div className="text-center mb-10">
+          <div className="w-20 h-20 bg-[#5AB9B1] rounded-full flex items-center justify-center text-white mb-6 mx-auto shadow-lg">
+            <Plus size={40} />
+          </div>
+          <h2 className="text-3xl font-bold mb-2">Connect to a Senior</h2>
+          <p className="text-[#718096]">Select a senior profile to start monitoring and providing care.</p>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {seniorsList.length > 0 ? (
+            seniorsList.map(senior => (
+              <motion.div 
+                key={senior.uid}
+                whileHover={{ scale: 1.02 }}
+                className="bg-white p-6 rounded-[32px] shadow-sm border border-[#E2E8F0] flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="w-12 h-12 bg-[#EDF2F7] rounded-full flex items-center justify-center text-[#4A5568] font-bold">
+                      {senior.name?.[0] || 'S'}
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-lg">{senior.name}</h3>
+                      <p className="text-xs text-[#718096]">Age: {senior.age || 'N/A'}</p>
+                    </div>
+                  </div>
+                  <p className="text-sm text-[#4A5568] line-clamp-2 mb-6">
+                    {senior.notes || 'No additional notes provided.'}
+                  </p>
+                </div>
+                
+                <button 
+                  onClick={() => handleLink(senior)}
+                  disabled={loading !== null}
+                  className="w-full bg-[#5AB9B1] text-white font-bold py-3 rounded-xl hover:bg-[#4A9D96] transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {loading === senior.uid ? <Loader2 className="animate-spin" size={20} /> : 'Connect'}
+                </button>
+              </motion.div>
+            ))
+          ) : (
+            <div className="col-span-full text-center py-12 bg-white rounded-[32px] border border-dashed border-[#CBD5E0]">
+              <p className="text-[#718096]">No senior profiles found.</p>
+            </div>
+          )}
+        </div>
+        {error && <p className="text-red-500 text-center mt-6 font-bold">{error}</p>}
+      </motion.div>
+    </div>
   );
 }

@@ -1,19 +1,21 @@
 {
   "entities": {
-    "SeniorProfile": {
-      "title": "SeniorProfile",
-      "description": "Profile information for the senior",
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Profile information for the user",
       "type": "object",
       "properties": {
+        "uid": { "type": "string" },
         "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["senior", "caregiver"] },
         "age": { "type": "integer" },
         "primaryCaregiver": { "type": "string" },
         "emergencyPhone": { "type": "string" },
         "medications": { "type": "string" },
         "notes": { "type": "string" },
-        "userId": { "type": "string", "description": "The UID of the senior or caregiver" }
+        "linkedSeniorId": { "type": "string", "description": "The UID of the senior this caregiver is linked to" }
       },
-      "required": ["name", "userId"]
+      "required": ["uid", "name", "role"]
     },
     "Reminder": {
       "title": "Reminder",
@@ -60,7 +62,7 @@
   },
   "firestore": {
     "/profiles/{userId}": {
-      "schema": "SeniorProfile",
+      "schema": "UserProfile",
       "description": "User profiles"
     },
     "/reminders/{reminderId}": {

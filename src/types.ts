@@ -9,13 +9,16 @@ export interface Location {
   lastUpdated: Date;
 }
 
-export interface SeniorProfile {
+export interface UserProfile {
+  uid: string;
   name: string;
-  age: number;
-  primaryCaregiver: string;
-  emergencyPhone: string;
-  medications: string;
-  notes: string;
+  role: 'senior' | 'caregiver';
+  age?: number;
+  primaryCaregiver?: string;
+  emergencyPhone?: string;
+  medications?: string;
+  notes?: string;
+  linkedSeniorId?: string; // For caregivers to link to a senior
 }
 
 export type UserRole = 'senior' | 'caregiver' | null;
@@ -36,7 +39,7 @@ export interface Reminder {
   title: string;
   icon: string;
   time: string;
-  repeat: 'Once' | 'Daily' | 'Weekdays' | 'Custom';
+  repeat: 'Daily' | 'Weekly' | 'Monthly' | 'Once';
   agent: 'daily_task' | 'medication';
   note?: string;
   completed?: boolean;

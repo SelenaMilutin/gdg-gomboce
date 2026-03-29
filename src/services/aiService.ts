@@ -3,11 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { GoogleGenAI, Type } from "@google/genai";
-import { ChatMessage, SeniorProfile, Reminder, ActivityLogEntry } from "../types";
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+import { GoogleGenAI, Modality } from "@google/genai";
+import { ChatMessage, UserProfile, Reminder, ActivityLogEntry } from "../types";
 
-console.log("Loaded Gemini API Key:", GEMINI_API_KEY ? "Yes" : "No");
+// Vite koristi import.meta.env, ne process.env
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
+
+// Potrebno za browser okruženje — starije verzije @google/genai nemaju dangerouslyAllowBrowser opciju
+if (typeof window !== "undefined") {
+  (window as any).process = { env: { GEMINI_API_KEY } };
+}
+
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
 export async function callGemini(
@@ -23,8 +29,8 @@ export async function callGemini(
         agent: "chat",
         payload: {
           message: "I'm currently in demo mode. Please set your Gemini API key in the Secrets panel.",
-          urgency: "low"
-        }
+          urgency: "low",
+        },
       });
     }
     return "I'm sorry, I'm currently in demo mode and cannot connect to the AI. Please check the API key configuration.";
@@ -34,8 +40,12 @@ export async function callGemini(
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: [
-        ...history.map(m => ({ role: m.role, parts: [{ text: m.content }] })),
-        { role: "user", parts: [{ text: userMessage }] }
+        ...history.map((m) => ({
+          // Gemini koristi "model" umesto "assistant"
+          role: m.role === "assistant" ? "model" : "user",
+          parts: [{ text: m.content }],
+        })),
+        { role: "user", parts: [{ text: userMessage }] },
       ],
       config: {
         systemInstruction,
@@ -43,10 +53,41 @@ export async function callGemini(
       },
     });
 
-    return response.text || "I'm sorry, I couldn't generate a response.";
+    // response.text je getter funkcija u @google/genai
+    return response.text ?? "I'm sorry, I couldn't generate a response.";
   } catch (error) {
     console.error("Error calling Gemini:", error);
     return "I'm having trouble connecting right now. Let's try again in a moment.";
+  }
+}
+
+export async function generateSpeech(text: string) {
+  if (!GEMINI_API_KEY || GEMINI_API_KEY === "MY_GEMINI_API_KEY") {
+    console.warn("Gemini API key is not set. Skipping TTS.");
+    return null;
+  }
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: [{ parts: [{ text }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: "Kore" },
+          },
+        },
+      },
+    });
+
+    const base64Audio =
+      response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+
+    return base64Audio ?? null;
+  } catch (error) {
+    console.error("Error generating speech:", error);
+    return null;
   }
 }
 
@@ -84,6 +125,7 @@ Context: {{medicationContext}}
 Compose a warm, reassuring reminder. Mention specific pill colors or instructions if provided.`,
 
   CHAT: `You are Memora, a warm, patient, and calm companion for an elderly person with memory difficulties.
+- You are multilingual and can speak Serbian if the user speaks Serbian.
 - Never correct the user harshly.
 - Speak simply and clearly.
 - Provide emotional support.
@@ -92,30 +134,46 @@ Compose a warm, reassuring reminder. Mention specific pill colors or instruction
   SUMMARY: `You are the Caregiver Summary Agent. 
 Based on the activity log: {{log}}
 Provide a concise, empathetic summary of the senior's day so far for the family caregiver.
-Suggest actions if necessary.`
+Suggest actions if necessary.`,
 };
 
-export async function routeRequest(profile: SeniorProfile, reminders: Reminder[], log: ActivityLogEntry[]) {
+export async function routeRequest(
+  profile: UserProfile,
+  reminders: Reminder[],
+  log: ActivityLogEntry[]
+) {
   const time = new Date().toLocaleTimeString();
   const profileStr = JSON.stringify(profile);
   const remindersStr = JSON.stringify(reminders);
   const logStr = JSON.stringify(log.slice(0, 5));
 
-  const systemInstruction = AGENT_PROMPTS.ORCHESTRATOR
-    .replace('{{profile}}', profileStr)
-    .replace('{{time}}', time)
-    .replace('{{reminders}}', remindersStr)
-    .replace('{{log}}', logStr);
+  const systemInstruction = AGENT_PROMPTS.ORCHESTRATOR.replace(
+    "{{profile}}",
+    profileStr
+  )
+    .replace("{{time}}", time)
+    .replace("{{reminders}}", remindersStr)
+    .replace("{{log}}", logStr);
 
-  const response = await callGemini(systemInstruction, "What should I do now?", [], "application/json");
-  
+  const response = await callGemini(
+    systemInstruction,
+    "What should I do now?",
+    [],
+    "application/json"
+  );
+
   try {
-    // Strip markdown code blocks if present
-    const cleanResponse = response.replace(/```json\n?|```/g, '').trim();
+    const cleanResponse = response.replace(/```json\n?|```/g, "").trim();
     const parsed = JSON.parse(cleanResponse);
-    return parsed as { agent: 'daily_task' | 'medication' | 'chat', payload: { message: string, urgency: string, action?: string } };
+    return parsed as {
+      agent: "daily_task" | "medication" | "chat";
+      payload: { message: string; urgency: string; action?: string };
+    };
   } catch (e) {
     console.error("Failed to parse orchestrator response:", e);
-    return { agent: 'chat', payload: { message: "Hello, how can I help you today?", urgency: 'low' } };
+    return {
+      agent: "chat" as const,
+      payload: { message: "Hello, how can I help you today?", urgency: "low" },
+    };
   }
 }

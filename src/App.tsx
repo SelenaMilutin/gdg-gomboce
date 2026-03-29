@@ -10,9 +10,26 @@ import { Heart, Shield, LogIn } from 'lucide-react';
 import SeniorView from './components/SeniorView';
 import CaregiverDashboard from './components/CaregiverDashboard';
 import AuthOverlay from './components/AuthOverlay';
+import LandingPage from './components/LandingPage';
+
+import { db, doc, updateDoc } from './firebase';
 
 export default function App() {
-  const { role, isAuthReady } = useApp();
+  const { user, role, isAuthReady, updateProfile, demoRole, setDemoRole } = useApp();
+  const [showLanding, setShowLanding] = useState(true);
+
+  const handleSelectRole = async (selectedRole: 'senior' | 'caregiver') => {
+    if (user) {
+      try {
+        await updateProfile({ role: selectedRole });
+      } catch (e) {
+        console.error("Error setting role:", e);
+      }
+    } else {
+      setDemoRole(selectedRole);
+    }
+    setShowLanding(false);
+  };
 
   if (!isAuthReady) {
     return (
@@ -23,17 +40,21 @@ export default function App() {
     );
   }
 
+  if (showLanding || (user && !role)) {
+    return <LandingPage onSelectRole={handleSelectRole} />;
+  }
+
   return (
     <>
-      <AuthOverlay />
+      <AuthOverlay onBackToLanding={() => setShowLanding(true)} />
       <AnimatePresence mode="wait">
-        {role === 'senior' ? (
-          <motion.div key="senior" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <SeniorView />
-          </motion.div>
-        ) : (
+        {(!user && demoRole === 'caregiver') || (user && role === 'caregiver') ? (
           <motion.div key="caregiver" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <CaregiverDashboard />
+          </motion.div>
+        ) : (
+          <motion.div key="senior" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <SeniorView />
           </motion.div>
         )}
       </AnimatePresence>

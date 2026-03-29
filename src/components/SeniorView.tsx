@@ -6,15 +6,26 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { motion, AnimatePresence } from 'motion/react';
-import { Mic, Bell, Phone, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
-import { callGemini, AGENT_PROMPTS, routeRequest } from '../services/aiService';
+import { Mic, Bell, Phone, CheckCircle2, XCircle, AlertTriangle, Copy, Check, User } from 'lucide-react';
+import { callGemini, AGENT_PROMPTS, routeRequest, generateSpeech } from '../services/aiService';
+
+const FALLBACK_PROFILE = {
+  name: "Milica Jovanović",
+  primaryCaregiver: "Ana Jovanović",
+  emergencyPhone: "+381601234567"
+};
 
 export default function SeniorView() {
-  const { seniorProfile, reminders, addLogEntry, activeReminder, setActiveReminder, setCurrentLocation } = useApp();
+  const { userProfile, reminders, addLogEntry, activeReminder, setActiveReminder, setCurrentLocation } = useApp();
   const [time, setTime] = useState(new Date());
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isEmergencyOpen, setIsEmergencyOpen] = useState(false);
   const [showRemindersList, setShowRemindersList] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // Fallback profile for demo mode (when not logged in)
+  const profile = userProfile || FALLBACK_PROFILE;
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
@@ -23,27 +34,49 @@ export default function SeniorView() {
 
   // Geolocation update logic
   useEffect(() => {
+    if (!("geolocation" in navigator)) {
+      console.warn('Geolocation is not available in this browser.');
+      return;
+    }
+
+    let isPermissionDenied = false;
+    let locationInterval: number | undefined;
+
     const updateLocation = () => {
-      if ("geolocation" in navigator) {
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            setCurrentLocation({
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-              lastUpdated: new Date()
-            });
-          },
-          (error) => {
-            console.error("Error getting location:", error);
-          },
-          { enableHighAccuracy: true }
-        );
-      }
+      if (isPermissionDenied) return;
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setCurrentLocation({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            lastUpdated: new Date()
+          });
+        },
+        (error) => {
+          if (error.code === error.PERMISSION_DENIED) {
+            isPermissionDenied = true;
+            if (locationInterval !== undefined) {
+              clearInterval(locationInterval);
+            }
+            console.warn('Location permission denied. Location updates disabled.');
+            return;
+          }
+
+          console.error('Error getting location:', error);
+        },
+        { enableHighAccuracy: true }
+      );
     };
 
     updateLocation();
-    const locationInterval = setInterval(updateLocation, 60000); // Update every minute
-    return () => clearInterval(locationInterval);
+    locationInterval = window.setInterval(updateLocation, 60000); // Update every minute
+
+    return () => {
+      if (locationInterval !== undefined) {
+        clearInterval(locationInterval);
+      }
+    };
   }, [setCurrentLocation]);
 
   // Demo simulation: Fire a medication reminder after 15 seconds
@@ -58,19 +91,25 @@ export default function SeniorView() {
   // Background Orchestrator check every 30 seconds
   useEffect(() => {
     const orchestratorInterval = setInterval(async () => {
-      const { agent, payload } = await routeRequest(seniorProfile, reminders, []);
-      
-      if (agent === 'daily_task' || agent === 'medication') {
-        addLogEntry({
-          agent: agent,
-          type: agent === 'medication' ? 'Medication Adherence Check' : 'Daily Routine Check',
-          outcome: 'Info',
-          message: payload.message
-        });
+      console.log('Orchestrator interval tick');
+      try {
+        const { agent, payload } = await routeRequest(profile as any, reminders, []);
+        if (agent === 'daily_task' || agent === 'medication') {
+          addLogEntry({
+            agent: agent,
+            type: agent === 'medication' ? 'Medication Adherence Check' : 'Daily Routine Check',
+            outcome: 'Info',
+            message: payload.message
+          });
+        } else {
+          console.log("Orchestrator routed to chat agent with message:", payload.message);
+        }
+      } catch (error) {
+        console.error('Orchestrator interval failed:', error);
       }
     }, 30000);
     return () => clearInterval(orchestratorInterval);
-  }, [seniorProfile, reminders, addLogEntry]);
+  }, [profile, reminders, addLogEntry]);
 
   const handleDone = (reminder: any) => {
     addLogEntry({
@@ -82,17 +121,33 @@ export default function SeniorView() {
     setActiveReminder(null);
   };
 
+  const copyToClipboard = () => {
+    if (userProfile?.uid) {
+      navigator.clipboard.writeText(userProfile.uid);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#FDFBF7] text-[#2D3748] font-sans selection:bg-[#5AB9B1]/30">
       {/* Header */}
-      <header className="p-8 pt-12 text-center">
+      <header className="p-8 pt-12 text-center relative">
+        {userProfile && (
+          <button 
+            onClick={() => setShowProfile(true)}
+            className="absolute top-8 right-8 p-3 bg-white shadow-md rounded-full text-[#5AB9B1]"
+          >
+            <User size={24} />
+          </button>
+        )}
         <div className="text-[80px] font-black leading-none mb-2 tabular-nums">
           {time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </div>
         <div className="text-3xl text-[#718096] font-medium mb-6">
           {time.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
         </div>
-        <h1 className="text-5xl font-bold">Hello, {seniorProfile.name.split(' ')[0]} 👋</h1>
+        <h1 className="text-5xl font-bold">Hello, {profile?.name?.split(' ')[0] || 'Senior'} 👋</h1>
       </header>
 
       {/* Main Actions */}
@@ -127,14 +182,14 @@ export default function SeniorView() {
 
         <motion.button
           whileTap={{ scale: 0.95 }}
-          onClick={() => window.location.href = `tel:${seniorProfile.emergencyPhone}`}
+          onClick={() => window.location.href = `tel:${profile.emergencyPhone}`}
           className="bg-white p-10 rounded-[40px] shadow-xl border-4 border-[#63B3ED] flex items-center gap-8 text-left"
         >
           <div className="w-24 h-24 bg-[#EBF8FF] rounded-full flex items-center justify-center">
             <Phone className="text-[#3182CE] w-12 h-12" />
           </div>
           <div>
-            <span className="text-4xl font-black block">Call {seniorProfile.primaryCaregiver.split(' ')[0]}</span>
+            <span className="text-4xl font-black block">Call {profile?.primaryCaregiver?.split(' ')[0] || 'Caregiver'}</span>
             <span className="text-xl text-[#718096]">I need to talk</span>
           </div>
         </motion.button>
@@ -151,25 +206,78 @@ export default function SeniorView() {
       {/* Modals & Overlays */}
       <AnimatePresence>
         {activeReminder && (
-          <ReminderTakeover 
-            reminder={activeReminder} 
-            onDone={() => handleDone(activeReminder)} 
-          />
+          <motion.div key={`reminder-${activeReminder.id || activeReminder.title || 'active'}`}>
+            <ReminderTakeover 
+              reminder={activeReminder} 
+              onDone={() => handleDone(activeReminder)} 
+            />
+          </motion.div>
         )}
         {isChatOpen && (
-          <ChatAgentModal onClose={() => setIsChatOpen(false)} />
+          <motion.div key="chat-modal">
+            <ChatAgentModal onClose={() => setIsChatOpen(false)} />
+          </motion.div>
         )}
         {showRemindersList && (
-          <RemindersList onClose={() => setShowRemindersList(false)} />
+          <motion.div key="reminders-list">
+            <RemindersList onClose={() => setShowRemindersList(false)} />
+          </motion.div>
         )}
         {isEmergencyOpen && (
-          <EmergencyOverlay 
-            onClose={() => setIsEmergencyOpen(false)} 
-            onConfirm={() => {
-              addLogEntry({ agent: 'orchestrator', type: 'Emergency', outcome: 'Emergency', message: 'Emergency button pressed' });
-              setIsEmergencyOpen(false);
-            }}
-          />
+          <motion.div key="emergency-overlay">
+            <EmergencyOverlay 
+              onClose={() => setIsEmergencyOpen(false)} 
+              onConfirm={() => {
+                addLogEntry({ agent: 'orchestrator', type: 'Emergency', outcome: 'Emergency', message: 'Emergency button pressed' });
+                setIsEmergencyOpen(false);
+              }}
+            />
+          </motion.div>
+        )}
+        {showProfile && userProfile && (
+          <motion.div
+            key="profile-modal"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6"
+            onClick={() => setShowProfile(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9 }}
+              animate={{ scale: 1 }}
+              className="bg-white rounded-[40px] p-8 w-full max-w-md shadow-2xl"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-3xl font-black">My Profile</h3>
+                <button onClick={() => setShowProfile(false)} className="p-2 bg-[#F7FAFC] rounded-full"><XCircle size={32} /></button>
+              </div>
+              
+              <div className="space-y-6">
+                <div>
+                  <label className="text-sm font-bold text-[#718096] uppercase tracking-wider">My Name</label>
+                  <p className="text-2xl font-bold">{userProfile.name}</p>
+                </div>
+                
+                <div className="p-6 bg-[#F7FAFC] rounded-3xl border-2 border-dashed border-[#CBD5E0]">
+                  <label className="text-sm font-bold text-[#718096] uppercase tracking-wider block mb-2">My ID (Share with Caregiver)</label>
+                  <div className="flex items-center gap-3">
+                    <code className="flex-1 bg-white p-3 rounded-xl text-lg font-mono border border-[#E2E8F0] break-all">
+                      {userProfile.uid}
+                    </code>
+                    <button 
+                      onClick={copyToClipboard}
+                      className={`p-4 rounded-2xl transition-colors ${copied ? 'bg-[#48BB78] text-white' : 'bg-[#5AB9B1] text-white'}`}
+                    >
+                      {copied ? <Check size={24} /> : <Copy size={24} />}
+                    </button>
+                  </div>
+                  <p className="mt-3 text-sm text-[#718096]">Your caregiver needs this ID to link to your profile.</p>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>
@@ -201,7 +309,7 @@ function ReminderTakeover({ reminder, onDone }: { reminder: any, onDone: () => v
 }
 
 function ChatAgentModal({ onClose }: { onClose: () => void }) {
-  const { seniorProfile, chatHistory, setChatHistory } = useApp();
+  const { userProfile, chatHistory, setChatHistory } = useApp();
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [aiResponse, setAiResponse] = useState('');
@@ -209,13 +317,46 @@ function ChatAgentModal({ onClose }: { onClose: () => void }) {
   
   const recognitionRef = useRef<any>(null);
 
+  const profile = userProfile || {
+    name: "Milica Jovanović",
+    primaryCaregiver: "Ana Jovanović",
+    emergencyPhone: "+381601234567"
+  };
+
+  const playPCM = async (base64Data: string) => {
+    try {
+      const binaryString = atob(base64Data);
+      const len = binaryString.length;
+      const bytes = new Int16Array(len / 2);
+      for (let i = 0; i < len; i += 2) {
+        bytes[i / 2] = (binaryString.charCodeAt(i + 1) << 8) | binaryString.charCodeAt(i);
+      }
+      
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      const audioBuffer = audioContext.createBuffer(1, bytes.length, 24000);
+      const channelData = audioBuffer.getChannelData(0);
+      
+      for (let i = 0; i < bytes.length; i++) {
+        channelData[i] = bytes[i] / 32768;
+      }
+      
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContext.destination);
+      source.start();
+    } catch (e) {
+      console.error("Error playing PCM:", e);
+    }
+  };
+
   useEffect(() => {
     if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       recognitionRef.current = new SpeechRecognition();
       recognitionRef.current.continuous = false;
       recognitionRef.current.interimResults = false;
-      recognitionRef.current.lang = 'en-US';
+      // Set to Serbian (sr-RS) to target Serbian seniors, but could be dynamic
+      recognitionRef.current.lang = 'sr-RS';
 
       recognitionRef.current.onresult = (event: any) => {
         const text = event.results[0][0].transcript;
@@ -236,17 +377,23 @@ function ChatAgentModal({ onClose }: { onClose: () => void }) {
 
   const handleSend = async (text: string) => {
     setIsProcessing(true);
-    const systemPrompt = AGENT_PROMPTS.CHAT.replace('{{caregiver}}', seniorProfile.primaryCaregiver);
+    const systemPrompt = AGENT_PROMPTS.CHAT.replace('{{caregiver}}', profile.primaryCaregiver || 'Caregiver');
     const response = await callGemini(systemPrompt, text, chatHistory);
     
     setAiResponse(response);
     setChatHistory([...chatHistory, { role: 'user', content: text }, { role: 'assistant', content: response }]);
     setIsProcessing(false);
 
-    // Speak response
-    const utterance = new SpeechSynthesisUtterance(response);
-    utterance.rate = 0.9;
-    window.speechSynthesis.speak(utterance);
+    // Speak response using Google TTS
+    const base64Audio = await generateSpeech(response);
+    if (base64Audio) {
+      playPCM(base64Audio);
+    } else {
+      // Fallback to browser TTS
+      const utterance = new SpeechSynthesisUtterance(response);
+      utterance.rate = 0.9;
+      window.speechSynthesis.speak(utterance);
+    }
   };
 
   return (
@@ -308,8 +455,8 @@ function RemindersList({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="space-y-6 overflow-y-auto pb-20">
-        {reminders.map(r => (
-          <div key={r.id} className="bg-white p-8 rounded-[32px] shadow-md border-2 border-[#E9E2D5] flex items-center gap-6">
+        {reminders.map((r, index) => (
+          <div key={r.id || `${r.title || 'reminder'}-${r.time || 'time'}-${index}`} className="bg-white p-8 rounded-[32px] shadow-md border-2 border-[#E9E2D5] flex items-center gap-6">
             <span className="text-6xl">{r.icon}</span>
             <div className="flex-1">
               <span className="text-3xl font-bold block">{r.title}</span>

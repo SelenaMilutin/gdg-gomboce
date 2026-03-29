@@ -8,13 +8,15 @@ service cloud.firestore {
     // Collection: profiles
     // Document ID: userId
     // Fields:
+    //   - uid: string (required)
     //   - name: string (required)
+    //   - role: string (required, 'senior' | 'caregiver')
     //   - age: number (optional)
     //   - primaryCaregiver: string (optional)
     //   - emergencyPhone: string (optional)
     //   - medications: string (optional)
     //   - notes: string (optional)
-    //   - userId: string (required, immutable)
+    //   - linkedSeniorId: string (optional, for caregivers)
     //
     // Collection: reminders
     // Document ID: reminderId
@@ -56,12 +58,30 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isSharedDemo(userId) {
+      return userId == 'shared-demo-senior';
+    }
+
     function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+      return isSharedDemo(userId) || (isAuthenticated() && request.auth.uid == userId);
+    }
+
+    function isLinkedCaregiver(seniorId) {
+      return isSharedDemo(seniorId) || (isAuthenticated() && (
+        exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.linkedSeniorId == seniorId)
+      );
     }
 
     function isDocOwner() {
-      return isAuthenticated() && request.auth.uid == resource.data.userId;
+      return isSharedDemo(resource.data.userId) || (isAuthenticated() && request.auth.uid == resource.data.userId);
+    }
+
+    function isDocLinkedCaregiver() {
+      return isSharedDemo(resource.data.userId) || (isAuthenticated() && (
+        exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.linkedSeniorId == resource.data.userId)
+      );
     }
 
     function uidUnchanged() {
@@ -97,9 +117,10 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidProfile(data) {
-      return hasRequiredFields(['name', 'userId']) &&
+      return hasRequiredFields(['name', 'uid', 'role']) &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-             data.userId is string;
+             data.uid is string &&
+             data.role in ['senior', 'caregiver'];
     }
 
     function isValidReminder(data) {
@@ -131,29 +152,29 @@ service cloud.firestore {
     // ===============================================================
 
     match /profiles/{userId} {
-      allow read: if isAuthenticated();
-      allow create: if isOwner(userId) && isValidProfile(request.resource.data);
-      allow update: if (isOwner(userId) || isAdmin()) && isValidProfile(request.resource.data) && uidNotModified();
+      allow read: if isAuthenticated() || isSharedDemo(userId);
+      allow create: if (isAuthenticated() || isSharedDemo(userId)) && isOwner(userId) && isValidProfile(request.resource.data);
+      allow update: if (isOwner(userId) || isAdmin()) && isValidProfile(request.resource.data);
     }
 
     match /reminders/{reminderId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidReminder(request.resource.data) && request.resource.data.userId == request.auth.uid;
-      allow update: if (isDocOwner() || isAdmin()) && isValidReminder(request.resource.data) && uidNotModified();
-      allow delete: if isDocOwner() || isAdmin();
+      allow read: if isDocOwner() || isDocLinkedCaregiver() || isAdmin();
+      allow create: if (isAuthenticated() || isSharedDemo(request.resource.data.userId)) && isValidReminder(request.resource.data) && (isOwner(request.resource.data.userId) || isLinkedCaregiver(request.resource.data.userId));
+      allow update: if (isDocOwner() || isDocLinkedCaregiver() || isAdmin()) && isValidReminder(request.resource.data);
+      allow delete: if isDocOwner() || isDocLinkedCaregiver() || isAdmin();
     }
 
     match /activityLog/{logId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidActivityLog(request.resource.data) && request.resource.data.userId == request.auth.uid;
-      allow update: if (isDocOwner() || isAdmin()) && isValidActivityLog(request.resource.data) && uidNotModified();
+      allow read: if isDocOwner() || isDocLinkedCaregiver() || isAdmin();
+      allow create: if (isAuthenticated() || isSharedDemo(request.resource.data.userId)) && isValidActivityLog(request.resource.data) && (isOwner(request.resource.data.userId) || isLinkedCaregiver(request.resource.data.userId));
+      allow update: if (isDocOwner() || isDocLinkedCaregiver() || isAdmin()) && isValidActivityLog(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /locations/{userId} {
-      allow read: if isAuthenticated();
+      allow read: if isOwner(userId) || isLinkedCaregiver(userId) || isAdmin();
       allow create: if isOwner(userId) && isValidLocation(request.resource.data);
-      allow update: if isOwner(userId) && isValidLocation(request.resource.data) && uidNotModified();
+      allow update: if isOwner(userId) && isValidLocation(request.resource.data);
     }
 
     // Default deny
