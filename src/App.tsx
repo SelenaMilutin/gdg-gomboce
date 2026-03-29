@@ -35,8 +35,12 @@ function Router() {
     );
   }
 
-  // No Firebase session at all
-  if (!user) return <LoginScreen />;
+  // No Firebase session at all. Still allow local demo role routing.
+  if (!user) {
+    if (role === 'senior') return <SeniorView />;
+    if (role === 'caregiver') return <CaregiverDashboard />;
+    return <LoginScreen />;
+  }
 
   const isAnon = user.isAnonymous;
 

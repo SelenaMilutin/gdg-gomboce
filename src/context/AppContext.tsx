@@ -172,8 +172,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (isAnon) {
       setSeniorsList([
         { uid: SHARED_DEMO_ID, name: 'Milica Jovanović', role: 'senior', ...INITIAL_SENIOR_DATA },
-        { uid: 'demo-senior-2', name: 'Dragan Nikolić',  role: 'senior', age: 78, notes: 'Loves chess.' },
-        { uid: 'demo-senior-3', name: 'Jelena Marković', role: 'senior', age: 82, notes: 'Needs medication reminders.' },
       ]);
       return;
     }
