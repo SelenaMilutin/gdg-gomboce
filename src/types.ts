@@ -43,6 +43,9 @@ export interface Reminder {
   agent: 'daily_task' | 'medication';
   note?: string;
   completed?: boolean;
+  userId?: string;
+  createdBy?: string;
+  createdAt?: Date;
 }
 
 export interface ChatMessage {

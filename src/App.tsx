@@ -1,63 +1,71 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * App.tsx — root component and auth router
+ *
+ * Routing table:
+ *  isAuthReady = false              → FullScreenLoader (Firebase restoring state)
+ *  no user                          → LoginScreen
+ *  anonymous user, no demoRole      → LoginScreen (shows demo buttons)
+ *  anonymous user, demoRole='senior'     → SeniorView
+ *  anonymous user, demoRole='caregiver'  → CaregiverDashboard
+ *  real user, userProfile = null    → LoginScreen (RolePicker for new accounts)
+ *  real user, userProfile.role = null   → LoginScreen (RolePicker)
+ *  real user, role = 'senior'       → SeniorView
+ *  real user, role = 'caregiver'    → CaregiverDashboard
  */
 
-import React, { useState } from 'react';
-import { useApp } from './context/AppContext';
-import { motion, AnimatePresence } from 'motion/react';
-import { Heart, Shield, LogIn } from 'lucide-react';
+import React from 'react';
+import { AppProvider, useApp } from './context/AppContext';
+import LoginScreen from './components/LoginScreen';
 import SeniorView from './components/SeniorView';
 import CaregiverDashboard from './components/CaregiverDashboard';
-import AuthOverlay from './components/AuthOverlay';
-import LandingPage from './components/LandingPage';
+import { Loader2 } from 'lucide-react';
 
-import { db, doc, updateDoc } from './firebase';
+function Router() {
+  const { isAuthReady, user, role, userProfile } = useApp();
 
-export default function App() {
-  const { user, role, isAuthReady, updateProfile, demoRole, setDemoRole } = useApp();
-  const [showLanding, setShowLanding] = useState(true);
-
-  const handleSelectRole = async (selectedRole: 'senior' | 'caregiver') => {
-    if (user) {
-      try {
-        await updateProfile({ role: selectedRole });
-      } catch (e) {
-        console.error("Error setting role:", e);
-      }
-    } else {
-      setDemoRole(selectedRole);
-    }
-    setShowLanding(false);
-  };
-
+  // Firebase hasn't resolved auth state yet
   if (!isAuthReady) {
     return (
-      <div className="min-h-screen bg-[#FDFBF7] flex flex-col items-center justify-center p-8 text-center">
-        <div className="w-16 h-16 border-4 border-[#5AB9B1] border-t-transparent rounded-full animate-spin mb-6"></div>
-        <h1 className="text-2xl font-bold text-[#2D3748]">EasyMind is waking up...</h1>
+      <div className="min-h-screen flex items-center justify-center bg-[#FDFBF7]">
+        <Loader2 className="animate-spin text-[#5AB9B1]" size={40} />
       </div>
     );
   }
 
-  if (showLanding || (user && !role)) {
-    return <LandingPage onSelectRole={handleSelectRole} />;
+  // No Firebase session at all
+  if (!user) return <LoginScreen />;
+
+  const isAnon = user.isAnonymous;
+
+  if (isAnon) {
+    // Demo mode — role chosen on landing screen
+    if (role === 'senior')    return <SeniorView />;
+    if (role === 'caregiver') return <CaregiverDashboard />;
+    return <LoginScreen />;  // no demo role yet → show landing
   }
 
+  // Real authenticated user — wait for profile to load from Firestore
+  // userProfile === null means onSnapshot returned no document (new user)
+  // userProfile === undefined would mean still loading — we treat null as "ready, no doc"
+  if (userProfile === null || !userProfile?.role) {
+    // New user or role not yet set → LoginScreen renders RolePicker
+    return <LoginScreen />;
+  }
+
+  if (userProfile.role === 'senior')    return <SeniorView />;
+  if (userProfile.role === 'caregiver') return <CaregiverDashboard />;
+
+  // Unrecognised role — fallback to login
+  return <LoginScreen />;
+}
+
+export default function App() {
   return (
-    <>
-      <AuthOverlay onBackToLanding={() => setShowLanding(true)} />
-      <AnimatePresence mode="wait">
-        {(!user && demoRole === 'caregiver') || (user && role === 'caregiver') ? (
-          <motion.div key="caregiver" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <CaregiverDashboard />
-          </motion.div>
-        ) : (
-          <motion.div key="senior" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <SeniorView />
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </>
+    <AppProvider>
+      <Router />
+    </AppProvider>
   );
 }

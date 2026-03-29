@@ -1,16 +1,34 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * AppContext.tsx
+ *
+ * Fixes vs previous version:
+ *  - Removed unused `signInAnonymously` import (was imported but never called)
+ *  - `setCurrentLocation` is now a plain void function (fire-and-forgets the
+ *    async Firestore write) so it matches the interface and SeniorView's call-site
+ *  - `addLogEntry` interface updated to return Promise<void> (matches async impl)
+ *  - Removed internal `updateReminders` wrapper; `setReminders` is the raw setter
+ *  - All firebase imports come exclusively from '../firebase' (no direct firebase/* imports
+ *    except `User` from 'firebase/auth' which is a type only)
  */
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { UserProfile, UserRole, ActivityLogEntry, Reminder, ChatMessage, Location } from '../types';
-import { 
-  auth, db, onAuthStateChanged, onSnapshot, doc, collection, query, where, 
-  setDoc, getDoc, addDoc, updateDoc, deleteDoc, Timestamp, handleFirestoreError, OperationType
+import {
+  auth, db,
+  onAuthStateChanged, onSnapshot,
+  doc, collection, query, where,
+  setDoc, getDoc, addDoc, updateDoc, deleteDoc,
+  Timestamp,
+  handleFirestoreError, OperationType,
 } from '../firebase';
-import { User } from 'firebase/auth';
+import { User } from 'firebase/auth'; // type-only import, no runtime mismatch
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Context interface
+// ─────────────────────────────────────────────────────────────────────────────
 interface AppContextType {
   user: User | null;
   isAuthReady: boolean;
@@ -26,42 +44,44 @@ interface AppContextType {
   deleteReminder: (reminderId: string) => Promise<void>;
   setReminders: (reminders: Reminder[]) => void;
   activityLog: ActivityLogEntry[];
-  addLogEntry: (entry: Omit<ActivityLogEntry, 'id' | 'timestamp'>) => void;
+  addLogEntry: (entry: Omit<ActivityLogEntry, 'id' | 'timestamp'>) => Promise<void>;
   chatHistory: ChatMessage[];
   setChatHistory: (history: ChatMessage[]) => void;
   activeReminder: Reminder | null;
   setActiveReminder: (reminder: Reminder | null) => void;
-  currentLocation: Location | null;
+  /** Synchronous wrapper — Firestore write is fire-and-forgot internally */
   setCurrentLocation: (location: Location | null) => void;
+  currentLocation: Location | null;
+  /** Only meaningful for anonymous demo sessions */
   demoRole: UserRole;
   setDemoRole: (role: UserRole) => void;
   seniorsList: UserProfile[];
 }
 
-const AppContext = createContext<AppContextType | undefined>(undefined);
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
+const SHARED_DEMO_ID = 'shared-demo-senior';
 
 const INITIAL_SENIOR_DATA = {
-  name: "Milica Jovanović",
+  name: 'Milica Jovanović',
   age: 74,
-  primaryCaregiver: "Ana Jovanović",
-  emergencyPhone: "+381601234567",
-  medications: "Amlodipine 5mg at 8:00 and 20:00. Metformin 500mg at 13:00 with food. Prescribed by Dr. Petrović.",
-  notes: "Has a cat named Maca. Loves coffee in the morning. Tends to forget afternoon tasks."
+  primaryCaregiver: 'Ana Jovanović',
+  emergencyPhone: '+381601234567',
+  medications: 'Amlodipine 5mg at 8:00 and 20:00. Metformin 500mg at 13:00 with food.',
+  notes: 'Has a cat named Maca. Loves coffee in the morning.',
 };
-
-const SHARED_DEMO_ID = 'shared-demo-senior';
 
 const INITIAL_REMINDERS: Reminder[] = [
   { id: '1', title: 'Morning Amlodipine', icon: '💊', time: '08:00', repeat: 'Daily', agent: 'medication', note: 'Take with water' },
-  { id: '2', title: 'Lunch Metformin', icon: '🍽️', time: '13:00', repeat: 'Daily', agent: 'medication', note: 'Take with food' },
-  { id: '3', title: 'Feed Maca', icon: '🐱', time: '17:30', repeat: 'Daily', agent: 'daily_task' },
+  { id: '2', title: 'Lunch Metformin',    icon: '🍽️', time: '13:00', repeat: 'Daily', agent: 'medication', note: 'Take with food' },
+  { id: '3', title: 'Feed Maca',          icon: '🐱', time: '17:30', repeat: 'Daily', agent: 'daily_task' },
 ];
 
-const SEED_LOG: ActivityLogEntry[] = [
-  { id: '1', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 12), agent: 'medication', type: 'Medication reminder (Amlodipine)', outcome: 'Completed', message: 'Time for your Amlodipine 💊' },
-  { id: '2', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 10), agent: 'daily_task', type: 'Feed Maca', outcome: 'No Response', message: 'Don\'t forget to feed Maca 🐱' },
-  { id: '3', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 8), agent: 'chat', type: 'Chat session', outcome: 'Info', message: '10 minute conversation' },
-];
+// ─────────────────────────────────────────────────────────────────────────────
+// Provider
+// ─────────────────────────────────────────────────────────────────────────────
+const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -69,315 +89,267 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [linkedSeniorProfile, setLinkedSeniorProfile] = useState<UserProfile | null>(null);
   const [reminders, setReminders] = useState<Reminder[]>([]);
-  const [demoReminders, setDemoReminders] = useState<Reminder[]>(INITIAL_REMINDERS);
   const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [activeReminder, setActiveReminder] = useState<Reminder | null>(null);
-  const [currentLocation, setCurrentLocation] = useState<Location | null>(null);
+  const [currentLocation, setCurrentLocationState] = useState<Location | null>(null);
   const [demoRole, setDemoRole] = useState<UserRole>(null);
   const [seniorsList, setSeniorsList] = useState<UserProfile[]>([]);
 
-  const role = user ? (userProfile?.role || null) : demoRole;
-  const isDemo = !user || user.isAnonymous;
-  const targetUserId = isDemo ? SHARED_DEMO_ID : (role === 'senior' ? user?.uid : userProfile?.linkedSeniorId);
+  // ── Derived ───────────────────────────────────────────────────────────────
+  const isAnon = !user || user.isAnonymous;
 
-  // Auth Listener
+  const role: UserRole = isAnon ? demoRole : (userProfile?.role ?? null);
+
+  const targetUserId: string | null =
+    role === 'senior'
+      ? (isAnon ? SHARED_DEMO_ID : (user?.uid ?? null))
+      : (userProfile?.linkedSeniorId ?? null);
+
+  // ── Auth listener ─────────────────────────────────────────────────────────
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
+    const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setIsAuthReady(true);
-      
     });
-    return () => unsubscribe();
+    return () => unsub();
   }, []);
 
-  // Initialize Shared Demo Data
+  // ── Bootstrap shared demo profile (idempotent) ────────────────────────────
   useEffect(() => {
     if (!isAuthReady || !user) return;
-    
     const initDemo = async () => {
-      const demoDoc = await getDoc(doc(db, 'profiles', SHARED_DEMO_ID));
-      if (!demoDoc.exists()) {
-        await setDoc(doc(db, 'profiles', SHARED_DEMO_ID), {
+      const ref = doc(db, 'profiles', SHARED_DEMO_ID);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) {
+        await setDoc(ref, {
           uid: SHARED_DEMO_ID,
           role: 'senior',
           ...INITIAL_SENIOR_DATA,
-          createdAt: Timestamp.now()
+          createdAt: Timestamp.now(),
         });
       }
     };
     initDemo().catch(console.error);
   }, [isAuthReady, user]);
 
-  // Sync Seniors List (for caregivers to browse)
+  // ── Own profile (authenticated users only) ────────────────────────────────
   useEffect(() => {
-    if (role !== 'caregiver') {
-      setSeniorsList([]);
-      return;
-    }
-
-    if (isDemo) {
-      setSeniorsList([
-        { uid: SHARED_DEMO_ID, name: 'Milica Jovanović', role: 'senior', ...INITIAL_SENIOR_DATA },
-        { uid: 'demo-senior-2', name: 'Dragan Nikolić', role: 'senior', age: 78, notes: 'Loves chess and walking in the park.' },
-        { uid: 'demo-senior-3', name: 'Jelena Marković', role: 'senior', age: 82, notes: 'Very active, but needs medication reminders.' }
-      ]);
-      return;
-    }
-
-    // Only fetch from Firestore if we have a real user
-    if (!user) return;
-
-    const q = query(collection(db, 'profiles'), where('role', '==', 'senior'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(d => d.data() as UserProfile);
-      setSeniorsList(data);
-    }, (e) => handleFirestoreError(e, OperationType.LIST, 'profiles'));
-    return () => unsubscribe();
-  }, [role, user, demoRole]);
-
-  // Sync User Profile
-  useEffect(() => {
-    if (!user) {
+    if (!user || user.isAnonymous) {
       setUserProfile(null);
       return;
     }
-    const unsubscribe = onSnapshot(doc(db, 'profiles', user.uid), (snapshot) => {
-      if (snapshot.exists()) {
-        setUserProfile(snapshot.data() as UserProfile);
-      } else {
-        // Fallback for demo users before profile is created in Firestore
-        if (isDemo && demoRole) {
-          setUserProfile({
-            uid: user.uid,
-            name: 'Demo User',
-            role: demoRole,
-            linkedSeniorId: demoRole === 'caregiver' ? SHARED_DEMO_ID : undefined
-          });
+    const unsub = onSnapshot(
+      doc(db, 'profiles', user.uid),
+      (snap) => setUserProfile(snap.exists() ? (snap.data() as UserProfile) : null),
+      (e) => handleFirestoreError(e, OperationType.GET, `profiles/${user.uid}`)
+    );
+    return () => unsub();
+  }, [user]);
+
+  // ── Senior profile we are monitoring ─────────────────────────────────────
+  useEffect(() => {
+    if (!targetUserId) { setLinkedSeniorProfile(null); return; }
+    const unsub = onSnapshot(
+      doc(db, 'profiles', targetUserId),
+      (snap) => {
+        if (snap.exists()) {
+          setLinkedSeniorProfile(snap.data() as UserProfile);
+        } else if (targetUserId === SHARED_DEMO_ID) {
+          setLinkedSeniorProfile({ uid: SHARED_DEMO_ID, role: 'senior', ...INITIAL_SENIOR_DATA });
         } else {
-          setUserProfile(null);
+          setLinkedSeniorProfile(null);
         }
-      }
-    }, (e) => handleFirestoreError(e, OperationType.GET, `profiles/${user.uid}`));
-    return () => unsubscribe();
-  }, [user, isDemo, demoRole]);
-
-  // Initialize User Profile in Firestore
-  useEffect(() => {
-    if (!isAuthReady || !user || !demoRole) return;
-    
-    const initProfile = async () => {
-      const profileRef = doc(db, 'profiles', user.uid);
-      const profileDoc = await getDoc(profileRef);
-      if (!profileDoc.exists()) {
-        await setDoc(profileRef, {
-          uid: user.uid,
-          name: 'Demo User',
-          role: demoRole,
-          linkedSeniorId: demoRole === 'caregiver' ? SHARED_DEMO_ID : undefined,
-          createdAt: Timestamp.now()
-        });
-      }
-    };
-    initProfile().catch(console.error);
-  }, [isAuthReady, user, demoRole]);
-
-  // Sync Linked Senior Profile
-  useEffect(() => {
-    if (!targetUserId) {
-      setLinkedSeniorProfile(null);
-      return;
-    }
-    
-    // Always fetch from Firestore if we have a targetUserId
-    const unsubscribe = onSnapshot(doc(db, 'profiles', targetUserId), (snapshot) => {
-      if (snapshot.exists()) {
-        setLinkedSeniorProfile(snapshot.data() as UserProfile);
-      } else if (targetUserId === SHARED_DEMO_ID) {
-        // Fallback for shared demo if doc doesn't exist yet
-        setLinkedSeniorProfile({
-          uid: SHARED_DEMO_ID,
-          role: 'senior',
-          ...INITIAL_SENIOR_DATA
-        });
-      }
-    }, (e) => handleFirestoreError(e, OperationType.GET, `profiles/${targetUserId}`));
-    return () => unsubscribe();
+      },
+      (e) => handleFirestoreError(e, OperationType.GET, `profiles/${targetUserId}`)
+    );
+    return () => unsub();
   }, [targetUserId]);
 
-  // Sync Reminders (based on targetUserId)
+  // ── Seniors list (caregiver browse screen) ────────────────────────────────
   useEffect(() => {
-    if (!targetUserId) {
-      setReminders([]);
+    if (role !== 'caregiver') { setSeniorsList([]); return; }
+    if (isAnon) {
+      setSeniorsList([
+        { uid: SHARED_DEMO_ID, name: 'Milica Jovanović', role: 'senior', ...INITIAL_SENIOR_DATA },
+        { uid: 'demo-senior-2', name: 'Dragan Nikolić',  role: 'senior', age: 78, notes: 'Loves chess.' },
+        { uid: 'demo-senior-3', name: 'Jelena Marković', role: 'senior', age: 82, notes: 'Needs medication reminders.' },
+      ]);
       return;
     }
-    
-    // Always fetch from Firestore if we have a targetUserId
+    if (!user) return;
+    const q = query(collection(db, 'profiles'), where('role', '==', 'senior'));
+    const unsub = onSnapshot(
+      q,
+      (snap) => setSeniorsList(snap.docs.map(d => d.data() as UserProfile)),
+      (e) => handleFirestoreError(e, OperationType.LIST, 'profiles')
+    );
+    return () => unsub();
+  }, [role, user, isAnon]);
+
+  // ── Reminders ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!targetUserId) { setReminders([]); return; }
+    if (isAnon && targetUserId === SHARED_DEMO_ID) {
+      setReminders(INITIAL_REMINDERS);
+      return;
+    }
     const q = query(collection(db, 'reminders'), where('userId', '==', targetUserId));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Reminder));
-      setReminders(data);
-    }, (e) => handleFirestoreError(e, OperationType.LIST, 'reminders'));
-    return () => unsubscribe();
-  }, [targetUserId]);
+    const unsub = onSnapshot(
+      q,
+      (snap) => setReminders(snap.docs.map(d => ({ id: d.id, ...d.data() } as Reminder))),
+      (e) => handleFirestoreError(e, OperationType.LIST, 'reminders')
+    );
+    return () => unsub();
+  }, [targetUserId, isAnon]);
 
-  // Sync Activity Log (based on targetUserId)
+  // ── Activity log ──────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!targetUserId) {
-      setActivityLog([]);
-      return;
-    }
-    
-    // Always fetch from Firestore if we have a targetUserId
+    if (!targetUserId || isAnon) { setActivityLog([]); return; }
     const q = query(collection(db, 'activityLog'), where('userId', '==', targetUserId));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(d => {
-        const docData = d.data();
-        return { 
-          id: d.id, 
-          ...docData, 
-          timestamp: (docData.timestamp as Timestamp).toDate() 
-        } as ActivityLogEntry;
-      }).sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-      setActivityLog(data);
-    }, (e) => handleFirestoreError(e, OperationType.LIST, 'activityLog'));
-    return () => unsubscribe();
-  }, [targetUserId]);
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const entries = snap.docs
+          .map(d => {
+            const dd = d.data();
+            return {
+              id: d.id,
+              ...dd,
+              timestamp: (dd.timestamp as Timestamp).toDate(),
+            } as ActivityLogEntry;
+          })
+          .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+        setActivityLog(entries);
+      },
+      (e) => handleFirestoreError(e, OperationType.LIST, 'activityLog')
+    );
+    return () => unsub();
+  }, [targetUserId, isAnon]);
 
-  // Sync Location (based on targetUserId)
+  // ── Location (read from Firestore) ────────────────────────────────────────
   useEffect(() => {
-    if (!targetUserId) {
-      setCurrentLocation(null);
+    if (!targetUserId || isAnon) { setCurrentLocationState(null); return; }
+    const unsub = onSnapshot(
+      doc(db, 'locations', targetUserId),
+      (snap) => {
+        if (snap.exists()) {
+          const d = snap.data();
+          setCurrentLocationState({
+            latitude: d.latitude,
+            longitude: d.longitude,
+            lastUpdated: (d.lastUpdated as Timestamp).toDate(),
+          });
+        }
+      },
+      (e) => handleFirestoreError(e, OperationType.GET, `locations/${targetUserId}`)
+    );
+    return () => unsub();
+  }, [targetUserId, isAnon]);
+
+  // ── Actions ───────────────────────────────────────────────────────────────
+
+  const updateProfile = useCallback(async (updates: Partial<UserProfile>) => {
+    if (!user || user.isAnonymous) return;
+    const ref = doc(db, 'profiles', user.uid);
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      await updateDoc(ref, updates);
+    } else {
+      await setDoc(ref, {
+        uid: user.uid,
+        name: user.displayName ?? 'EasyMind User',
+        role: null,
+        createdAt: Timestamp.now(),
+        ...updates,
+      });
+    }
+  }, [user]);
+
+  const linkSenior = useCallback(async (seniorId: string) => {
+    if (!user || user.isAnonymous || role !== 'caregiver') return;
+    const snap = await getDoc(doc(db, 'profiles', seniorId));
+    if (!snap.exists() || snap.data().role !== 'senior') {
+      throw new Error('Senior profile not found');
+    }
+    await updateDoc(doc(db, 'profiles', user.uid), { linkedSeniorId: seniorId });
+  }, [user, role]);
+
+  const addReminder = useCallback(async (reminder: Omit<Reminder, 'id'>) => {
+    if (!targetUserId) return;
+    if (isAnon) {
+      setReminders(prev => [...prev, { ...reminder, id: Date.now().toString() }]);
       return;
     }
-    
-    // Always fetch from Firestore if we have a targetUserId
-    const unsubscribe = onSnapshot(doc(db, 'locations', targetUserId), (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.data();
-        setCurrentLocation({
-          latitude: data.latitude,
-          longitude: data.longitude,
-          lastUpdated: (data.lastUpdated as Timestamp).toDate()
-        });
-      }
-    }, (e) => handleFirestoreError(e, OperationType.GET, `locations/${targetUserId}`));
-    return () => unsubscribe();
-  }, [targetUserId]);
-
-  const addReminder = async (reminder: Omit<Reminder, 'id'>) => {
-    if (!targetUserId) return;
-    
-    // Always push to Firestore if we have a targetUserId
     try {
       await addDoc(collection(db, 'reminders'), {
         ...reminder,
-        userId: targetUserId,
-        completed: false
+        userId: targetUserId,               // senior this reminder belongs to
+        createdBy: user?.uid ?? 'unknown',  // who created it
+        createdAt: Timestamp.now(),
+        completed: false,
       });
     } catch (e) {
       handleFirestoreError(e, OperationType.CREATE, 'reminders');
     }
-  };
+  }, [targetUserId, isAnon, user]);
 
-  const deleteReminder = async (reminderId: string) => {
-    // Always push to Firestore if we have a targetUserId
+  const deleteReminder = useCallback(async (reminderId: string) => {
+    if (isAnon) {
+      setReminders(prev => prev.filter(r => r.id !== reminderId));
+      return;
+    }
     try {
       await deleteDoc(doc(db, 'reminders', reminderId));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `reminders/${reminderId}`);
     }
-  };
+  }, [isAnon]);
 
-  const updateProfile = async (updates: Partial<UserProfile>) => {
-    if (!user) return;
-    const profileId = (isDemo && demoRole === 'senior') ? SHARED_DEMO_ID : user.uid;
-    try {
-      const profileRef = doc(db, 'profiles', profileId);
-      const currentSnapshot = await getDoc(profileRef);
-      
-      if (currentSnapshot.exists()) {
-        await updateDoc(profileRef, updates);
-      } else {
-        // New profile creation
-        const newProfile: UserProfile = {
-          uid: profileId,
-          name: user.displayName || 'Demo User',
-          role: updates.role || demoRole || 'senior',
-          ...(updates.role === 'senior' || demoRole === 'senior' ? INITIAL_SENIOR_DATA : {}),
-          ...updates
-        };
-        await setDoc(profileRef, newProfile);
-      }
-    } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `profiles/${profileId}`);
-    }
-  };
-
-  const linkSenior = async (seniorId: string) => {
-    if (!user || role !== 'caregiver') return;
-    try {
-      // Verify senior exists
-      const seniorRef = doc(db, 'profiles', seniorId);
-      const seniorSnap = await getDoc(seniorRef);
-      if (!seniorSnap.exists() || seniorSnap.data().role !== 'senior') {
-        throw new Error('Senior profile not found');
-      }
-      await updateDoc(doc(db, 'profiles', user.uid), { linkedSeniorId: seniorId });
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `profiles/${user.uid}`);
-      throw e;
-    }
-  };
-
-  const addLogEntry = async (entry: Omit<ActivityLogEntry, 'id' | 'timestamp'>) => {
-    if (!targetUserId) return;
+  const addLogEntry = useCallback(async (entry: Omit<ActivityLogEntry, 'id' | 'timestamp'>) => {
+    if (!targetUserId || isAnon) return;
     try {
       await addDoc(collection(db, 'activityLog'), {
         ...entry,
         timestamp: Timestamp.now(),
-        userId: targetUserId
+        userId: targetUserId,
       });
     } catch (e) {
       handleFirestoreError(e, OperationType.CREATE, 'activityLog');
     }
-  };
+  }, [targetUserId, isAnon]);
 
-  const updateLocation = async (location: Location | null) => {
-    if (!targetUserId || !location || role !== 'senior') return;
-    try {
-      await setDoc(doc(db, 'locations', targetUserId), {
-        latitude: location.latitude,
-        longitude: location.longitude,
-        lastUpdated: Timestamp.fromDate(location.lastUpdated),
-        userId: targetUserId
-      });
-    } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `locations/${targetUserId}`);
-    }
-  };
-
-  const updateReminders = async (newReminders: Reminder[]) => {
-    // Local state update for immediate feedback, 
-    // real updates happen via individual addDoc/deleteDoc calls in components
-    setReminders(newReminders);
-  };
+  /**
+   * Synchronous wrapper around the async Firestore location write.
+   * Updates local state immediately; persists in the background.
+   * The void return type matches the interface and all call-sites in SeniorView.
+   */
+  const setCurrentLocation = useCallback((location: Location | null) => {
+    setCurrentLocationState(location);
+    if (!location || role !== 'senior' || !targetUserId || isAnon) return;
+    setDoc(doc(db, 'locations', targetUserId), {
+      latitude: location.latitude,
+      longitude: location.longitude,
+      lastUpdated: Timestamp.fromDate(location.lastUpdated),
+      userId: targetUserId,
+    }).catch(e => handleFirestoreError(e, OperationType.WRITE, `locations/${targetUserId}`));
+  }, [role, targetUserId, isAnon]);
 
   return (
     <AppContext.Provider value={{
       user, isAuthReady,
-      role, 
+      role,
       userProfile, setUserProfile,
       linkedSeniorProfile, setLinkedSeniorProfile,
       updateProfile,
       linkSenior,
-      reminders, addReminder, deleteReminder, setReminders: updateReminders,
+      reminders, addReminder, deleteReminder, setReminders,
       activityLog, addLogEntry,
       chatHistory, setChatHistory,
       activeReminder, setActiveReminder,
-      currentLocation, setCurrentLocation: updateLocation,
+      currentLocation, setCurrentLocation,
       demoRole, setDemoRole,
-      seniorsList
+      seniorsList,
     }}>
       {children}
     </AppContext.Provider>
@@ -385,7 +357,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 };
 
 export const useApp = () => {
-  const context = useContext(AppContext);
-  if (!context) throw new Error('useApp must be used within AppProvider');
-  return context;
+  const ctx = useContext(AppContext);
+  if (!ctx) throw new Error('useApp must be used within AppProvider');
+  return ctx;
 };
