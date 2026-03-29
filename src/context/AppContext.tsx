@@ -5,13 +5,12 @@
  * AppContext.tsx
  *
  * Fixes vs previous version:
- *  - Removed unused `signInAnonymously` import (was imported but never called)
- *  - `setCurrentLocation` is now a plain void function (fire-and-forgets the
- *    async Firestore write) so it matches the interface and SeniorView's call-site
- *  - `addLogEntry` interface updated to return Promise<void> (matches async impl)
- *  - Removed internal `updateReminders` wrapper; `setReminders` is the raw setter
- *  - All firebase imports come exclusively from '../firebase' (no direct firebase/* imports
- *    except `User` from 'firebase/auth' which is a type only)
+ *  - updateProfile: preserves createdAt from existing doc, never overwrites it
+ *  - updateProfile: removed manual setUserProfile() call — onSnapshot handles it
+ *  - updateProfile: senior name falls back to 'Unknown' so validProfile() passes
+ *  - updateProfile: senior uid is set to the auto-generated doc ID (required by rules)
+ *  - setCurrentLocation: plain void wrapper, fire-and-forgets Firestore write
+ *  - All firebase imports come exclusively from '../firebase'
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
@@ -24,7 +23,7 @@ import {
   Timestamp, writeBatch,
   handleFirestoreError, OperationType,
 } from '../firebase';
-import { User } from 'firebase/auth'; // type-only import, no runtime mismatch
+import { User } from 'firebase/auth';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Context interface
@@ -37,7 +36,7 @@ interface AppContextType {
   setUserProfile: (profile: UserProfile | null) => void;
   linkedSeniorProfile: UserProfile | null;
   setLinkedSeniorProfile: (profile: UserProfile | null) => void;
-  updateProfile: (profile: Partial<UserProfile>) => Promise<void>;
+  updateProfile: (profile: Partial<UserProfile> & { linkedSenior?: any }) => Promise<void>;
   linkSenior: (seniorId: string) => Promise<void>;
   reminders: Reminder[];
   addReminder: (reminder: Omit<Reminder, 'id'>) => Promise<void>;
@@ -167,23 +166,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [targetUserId]);
 
   // ── Seniors list (caregiver browse screen) ────────────────────────────────
-  useEffect(() => {
-    if (role !== 'caregiver') { setSeniorsList([]); return; }
-    if (isAnon) {
-      setSeniorsList([
-        { uid: SHARED_DEMO_ID, name: 'Milica Jovanović', role: 'senior', ...INITIAL_SENIOR_DATA },
-      ]);
-      return;
-    }
-    if (!user) return;
-    const q = query(collection(db, 'profiles'), where('role', '==', 'senior'));
-    const unsub = onSnapshot(
-      q,
-      (snap) => setSeniorsList(snap.docs.map(d => d.data() as UserProfile)),
-      (e) => handleFirestoreError(e, OperationType.LIST, 'profiles')
-    );
-    return () => unsub();
-  }, [role, user, isAnon]);
+useEffect(() => {
+  if (role !== 'caregiver') { setSeniorsList([]); return; }
+  if (isAnon) {
+    setSeniorsList([
+      { uid: SHARED_DEMO_ID, name: 'Milica Jovanović', role: 'senior', ...INITIAL_SENIOR_DATA },
+    ]);
+    return;
+  }
+  if (!user) return;
+
+  // ✅ Only fetch seniors this caregiver created/linked — not all seniors globally
+  const q = query(
+    collection(db, 'profiles'),
+    where('role', '==', 'senior'),
+    where('primaryCaregiver', '==', user.uid)  // ← the fix
+  );
+
+  const unsub = onSnapshot(
+    q,
+    (snap) => setSeniorsList(snap.docs.map(d => ({ ...(d.data() as UserProfile), uid: d.id }))),
+    (e) => handleFirestoreError(e, OperationType.LIST, 'profiles')
+  );
+  return () => unsub();
+}, [role, user, isAnon]);
+
 
   // ── Reminders ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -195,7 +202,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const q = query(collection(db, 'reminders'), where('userId', '==', targetUserId));
     const unsub = onSnapshot(
       q,
-      (snap) => setReminders(snap.docs.map(d => ({ id: d.id, ...d.data() } as Reminder))),
+      (snap) => setReminders(snap.docs.map(d => ({ ...(d.data() as Reminder), id: d.id }))),
       (e) => handleFirestoreError(e, OperationType.LIST, 'reminders')
     );
     return () => unsub();
@@ -213,8 +220,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           .map(d => {
             const dd = d.data();
             return {
-              id: d.id,
               ...dd,
+              id: d.id,
               timestamp: (dd.timestamp as Timestamp).toDate(),
             } as ActivityLogEntry;
           })
@@ -250,56 +257,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // ── Actions ───────────────────────────────────────────────────────────────
 
   const updateProfile = useCallback(async (updates: Partial<UserProfile> & { linkedSenior?: any }) => {
-  if (!user || user.isAnonymous) return;
+    if (!user || user.isAnonymous) return;
 
-  const batch = writeBatch(db);
-  const caregiverRef = doc(db, 'profiles', user.uid);
-  
-  const { linkedSenior, ...mainProfileUpdates } = updates;
-  let finalSeniorId = mainProfileUpdates.linkedSeniorId;
+    const batch = writeBatch(db);
+    const caregiverRef = doc(db, 'profiles', user.uid);
 
-  try {
-    // Fetch existing doc to preserve createdAt and avoid overwriting stable fields
-    const existingSnap = await getDoc(caregiverRef);
-    const existingData = existingSnap.exists() ? existingSnap.data() : null;
+    const { linkedSenior, ...mainProfileUpdates } = updates;
+    let finalSeniorId = mainProfileUpdates.linkedSeniorId;
 
-    // SCENARIO: Caregiver is creating a new Senior profile during registration
-    if (linkedSenior && mainProfileUpdates.role === 'caregiver') {
-      const newSeniorRef = doc(collection(db, 'profiles'));
-      finalSeniorId = newSeniorRef.id;
+    try {
+      // Fetch existing doc to preserve createdAt and avoid overwriting stable fields
+      const existingSnap = await getDoc(caregiverRef);
+      const existingData = existingSnap.exists() ? existingSnap.data() : null;
 
-      batch.set(newSeniorRef, {
-        uid: finalSeniorId,
-        role: 'senior',
-        name: linkedSenior.name,
-        age: Number(linkedSenior.age) || null,
-        medications: linkedSenior.medications || '',
-        primaryCaregiver: user.uid,
-        createdAt: Timestamp.now(),
-      });
+      // SCENARIO: Caregiver is creating a new Senior profile during registration
+      if (linkedSenior && mainProfileUpdates.role === 'caregiver') {
+        const newSeniorRef = doc(collection(db, 'profiles'));
+        finalSeniorId = newSeniorRef.id;
+
+        batch.set(newSeniorRef, {
+          // ✅ uid must match the auto-generated doc ID — required by validSeniorProfileByCaregiver
+          uid: finalSeniorId,
+          role: 'senior',
+          // ✅ name fallback: validProfile requires name.size() > 0, so we can't send an empty string
+          name: (linkedSenior.name as string)?.trim() || 'Unknown',
+          age: Number(linkedSenior.age) || null,
+          medications: linkedSenior.medications || '',
+          // ✅ primaryCaregiver must equal request.auth.uid to pass the security rule
+          primaryCaregiver: user.uid,
+          createdAt: Timestamp.now(),
+        });
+      }
+
+      const userProfileData: Partial<UserProfile> = {
+        uid: user.uid,
+        name: user.displayName ?? 'EasyMind User',
+        // ✅ Preserve existing createdAt — never stamp a new one on updates
+        createdAt: existingData?.createdAt ?? Timestamp.now(),
+        ...mainProfileUpdates,
+        linkedSeniorId: finalSeniorId ?? null,
+      };
+
+      batch.set(caregiverRef, userProfileData, { merge: true });
+      await batch.commit();
+
+      // ✅ Do NOT call setUserProfile here — the onSnapshot listener above
+      // will pick up the Firestore write and update state automatically.
+      // Calling it manually caused a new object reference on every save,
+      // which re-triggered downstream effects and caused the login loop.
+
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `profiles/${user.uid}`);
+      throw e;
     }
-
-    const userProfileData = {
-      uid: user.uid,
-      name: user.displayName ?? 'EasyMind User',
-      // Preserve existing createdAt — never overwrite it on updates
-      createdAt: existingData?.createdAt ?? Timestamp.now(),
-      ...mainProfileUpdates,
-      linkedSeniorId: finalSeniorId ?? null,
-    };
-
-    batch.set(caregiverRef, userProfileData, { merge: true });
-    await batch.commit();
-
-    // DO NOT call setUserProfile here — the onSnapshot listener handles it.
-    // Calling it manually created a new object reference on every update,
-    // which triggered downstream effects and caused the login loop.
-
-  } catch (e) {
-    handleFirestoreError(e, OperationType.WRITE, `profiles/${user.uid}`);
-    throw e;
-  }
-}, [user]);
+  }, [user]);
 
   const linkSenior = useCallback(async (seniorId: string) => {
     if (!user || user.isAnonymous || role !== 'caregiver') return;
@@ -319,8 +330,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await addDoc(collection(db, 'reminders'), {
         ...reminder,
-        userId: targetUserId,               // senior this reminder belongs to
-        createdBy: user?.uid ?? 'unknown',  // who created it
+        userId: targetUserId,
+        createdBy: user?.uid ?? 'unknown',
         createdAt: Timestamp.now(),
         completed: false,
       });
@@ -357,7 +368,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   /**
    * Synchronous wrapper around the async Firestore location write.
    * Updates local state immediately; persists in the background.
-   * The void return type matches the interface and all call-sites in SeniorView.
    */
   const setCurrentLocation = useCallback((location: Location | null) => {
     setCurrentLocationState(location);

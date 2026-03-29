@@ -16,7 +16,7 @@ const FALLBACK_PROFILE = {
 };
 
 export default function SeniorView() {
-  const { userProfile, reminders, addLogEntry, activeReminder, setActiveReminder, setCurrentLocation } = useApp();
+  const { userProfile, reminders, addLogEntry, activeReminder, setActiveReminder, setCurrentLocation, user } = useApp();
   const [time, setTime] = useState(new Date());
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isEmergencyOpen, setIsEmergencyOpen] = useState(false);
@@ -132,6 +132,20 @@ export default function SeniorView() {
   return (
     <div className="min-h-screen bg-[#FDFBF7] text-[#2D3748] font-sans selection:bg-[#5AB9B1]/30">
       {/* Header */}
+
+       {/* TODO: REMOVE BEFORE PROD */}
+    {import.meta.env.DEV && user && (
+      <button
+        onClick={() => import('../firebase').then(f => f.logout())}
+        style={{
+          position: 'fixed', top: 8, right: 8, zIndex: 9999,
+          background: 'red', color: 'white', padding: '4px 12px',
+          borderRadius: 6, fontSize: 12, cursor: 'pointer'
+        }}
+      >
+        DEV LOGOUT
+      </button>
+    )}
       <header className="p-8 pt-12 text-center relative">
         {userProfile && (
           <button 

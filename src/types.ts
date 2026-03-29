@@ -2,7 +2,6 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-
 export interface Location {
   latitude: number;
   longitude: number;
@@ -18,7 +17,8 @@ export interface UserProfile {
   emergencyPhone?: string;
   medications?: string;
   notes?: string;
-  linkedSeniorId?: string; // For caregivers to link to a senior
+  linkedSeniorId?: string;
+  createdAt?: any;
 }
 
 export type UserRole = 'senior' | 'caregiver' | null;
@@ -45,7 +45,7 @@ export interface Reminder {
   completed?: boolean;
   userId?: string;
   createdBy?: string;
-  createdAt?: Date;
+  createdAt?: any;
 }
 
 export interface ChatMessage {

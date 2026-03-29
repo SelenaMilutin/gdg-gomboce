@@ -194,8 +194,8 @@ function ActivityLog() {
       </div>
 
       <div className="space-y-4">
-        {filteredLog.map(entry => (
-          <LogEntry key={entry.id} entry={entry} />
+        {filteredLog.map((entry, index) => (
+          <LogEntry key={entry.id || `${entry.type || 'log'}-${entry.timestamp?.toString?.() || index}`} entry={entry} />
         ))}
       </div>
     </motion.div>
@@ -268,8 +268,8 @@ function RoutineCalendar() {
       </div>
 
       <div className="space-y-4">
-        {reminders.sort((a, b) => a.time.localeCompare(b.time)).map(r => (
-          <div key={r.id} className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex items-center gap-4 group">
+        {reminders.sort((a, b) => a.time.localeCompare(b.time)).map((r, index) => (
+          <div key={r.id || `${r.title || 'reminder'}-${r.time || 'time'}-${index}`} className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex items-center gap-4 group">
             <span className="text-3xl">{r.icon}</span>
             <div className="flex-1">
               <h3 className="font-bold text-sm">{r.title}</h3>
@@ -547,6 +547,20 @@ function LinkSeniorUI() {
 
   return (
     <div className="min-h-screen bg-[#F7FAFC] flex flex-col items-center justify-center p-6">
+       {/* TODO: REMOVE BEFORE PROD */}
+    {import.meta.env.DEV && user && (
+      <button
+        onClick={() => import('../firebase').then(f => f.logout())}
+        style={{
+          position: 'fixed', top: 8, right: 8, zIndex: 9999,
+          background: 'red', color: 'white', padding: '4px 12px',
+          borderRadius: 6, fontSize: 12, cursor: 'pointer'
+        }}
+      >
+        DEV LOGOUT
+      </button>
+    )}
+
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-2xl">
         <div className="text-center mb-10">
           <div className="w-20 h-20 bg-[#5AB9B1] rounded-full flex items-center justify-center text-white mb-6 mx-auto shadow-lg">
@@ -558,9 +572,9 @@ function LinkSeniorUI() {
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {seniorsList.length > 0 ? (
-            seniorsList.map(senior => (
+            seniorsList.map((senior, index) => (
               <motion.div 
-                key={senior.uid}
+                key={senior.uid || `${senior.name || 'senior'}-${index}`}
                 whileHover={{ scale: 1.02 }}
                 className="bg-white p-6 rounded-[32px] shadow-sm border border-[#E2E8F0] flex flex-col justify-between"
               >

@@ -96,6 +96,16 @@ service cloud.firestore {
              d.role in ['senior', 'caregiver'];
     }
 
+    // Relaxed validator for senior profiles created by a caregiver —
+    // name may be a placeholder if the caregiver left it blank.
+    function validSeniorProfileByCaregiver(d) {
+      return d.keys().hasAll(['name', 'uid', 'role', 'primaryCaregiver']) &&
+             d.name             is string && d.name.size() > 0 && d.name.size() < 100 &&
+             d.uid              is string &&
+             d.role             == 'senior' &&
+             d.primaryCaregiver is string && d.primaryCaregiver == request.auth.uid;
+    }
+
     function validReminder(d) {
       return d.keys().hasAll(['title', 'time', 'userId', 'createdBy']) &&
              d.title     is string && d.title.size() > 0 && d.title.size() < 200 &&
@@ -133,8 +143,16 @@ service cloud.firestore {
       allow read: if isAuthed() &&
                      get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.get('role', '') == 'caregiver';
 
+      // Normal self-registration (senior or caregiver creating their own profile)
       allow create: if (isSelf(userId) || isSharedDemo(userId)) &&
                        validProfile(request.resource.data);
+
+      // ✅ FIX: Caregiver creating a "ghost" senior profile during registration.
+      // The doc ID is auto-generated (not the caregiver's uid), so isSelf() fails.
+      // We allow it if: caller is authed, the new doc is a senior, and
+      // primaryCaregiver is set to the caller's own uid.
+      allow create: if isAuthed() &&
+                       validSeniorProfileByCaregiver(request.resource.data);
 
       allow update: if (isSelf(userId) || isAdmin()) &&
                        validProfile(request.resource.data);
