@@ -21,7 +21,7 @@ import {
   onAuthStateChanged, onSnapshot,
   doc, collection, query, where,
   setDoc, getDoc, addDoc, updateDoc, deleteDoc,
-  Timestamp,
+  Timestamp, writeBatch,
   handleFirestoreError, OperationType,
 } from '../firebase';
 import { User } from 'firebase/auth'; // type-only import, no runtime mismatch
@@ -247,22 +247,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
-  const updateProfile = useCallback(async (updates: Partial<UserProfile>) => {
-    if (!user || user.isAnonymous) return;
-    const ref = doc(db, 'profiles', user.uid);
-    const snap = await getDoc(ref);
-    if (snap.exists()) {
-      await updateDoc(ref, updates);
-    } else {
-      await setDoc(ref, {
-        uid: user.uid,
-        name: user.displayName ?? 'EasyMind User',
-        role: null,
+  const updateProfile = useCallback(async (updates: Partial<UserProfile> & { linkedSenior?: any }) => {
+  if (!user || user.isAnonymous) return;
+
+  const batch = writeBatch(db);
+  const caregiverRef = doc(db, 'profiles', user.uid);
+  
+  const { linkedSenior, ...mainProfileUpdates } = updates;
+  let finalSeniorId = mainProfileUpdates.linkedSeniorId;
+
+  try {
+    // Fetch existing doc to preserve createdAt and avoid overwriting stable fields
+    const existingSnap = await getDoc(caregiverRef);
+    const existingData = existingSnap.exists() ? existingSnap.data() : null;
+
+    // SCENARIO: Caregiver is creating a new Senior profile during registration
+    if (linkedSenior && mainProfileUpdates.role === 'caregiver') {
+      const newSeniorRef = doc(collection(db, 'profiles'));
+      finalSeniorId = newSeniorRef.id;
+
+      batch.set(newSeniorRef, {
+        uid: finalSeniorId,
+        role: 'senior',
+        name: linkedSenior.name,
+        age: Number(linkedSenior.age) || null,
+        medications: linkedSenior.medications || '',
+        primaryCaregiver: user.uid,
         createdAt: Timestamp.now(),
-        ...updates,
       });
     }
-  }, [user]);
+
+    const userProfileData = {
+      uid: user.uid,
+      name: user.displayName ?? 'EasyMind User',
+      // Preserve existing createdAt — never overwrite it on updates
+      createdAt: existingData?.createdAt ?? Timestamp.now(),
+      ...mainProfileUpdates,
+      linkedSeniorId: finalSeniorId ?? null,
+    };
+
+    batch.set(caregiverRef, userProfileData, { merge: true });
+    await batch.commit();
+
+    // DO NOT call setUserProfile here — the onSnapshot listener handles it.
+    // Calling it manually created a new object reference on every update,
+    // which triggered downstream effects and caused the login loop.
+
+  } catch (e) {
+    handleFirestoreError(e, OperationType.WRITE, `profiles/${user.uid}`);
+    throw e;
+  }
+}, [user]);
 
   const linkSenior = useCallback(async (seniorId: string) => {
     if (!user || user.isAnonymous || role !== 'caregiver') return;

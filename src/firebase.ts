@@ -1,6 +1,6 @@
 import { initializeApp, FirebaseError } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, addDoc, updateDoc, deleteDoc, Timestamp, getDocFromServer } from 'firebase/firestore';
+import { getFirestore, collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, addDoc, updateDoc, deleteDoc, Timestamp, getDocFromServer, writeBatch } from 'firebase/firestore';
 
 const env = import.meta.env;
 
@@ -12,6 +12,16 @@ const firebaseConfig = {
   messagingSenderId: env.VITE_MESSAGING_SENDER_ID,
   appId: env.VITE_APP_ID
 };
+
+// Initialize Firebase SDK
+console.log("Initializing Firebase with config:", {
+  apiKey: env.VITE_API_KEY ? "****" : "MISSING",
+  authDomain: env.VITE_AUTH_DOMAIN || "MISSING",
+  projectId: env.VITE_PROJECT_ID || "MISSING",
+  storageBucket: env.VITE_STORAGE_BUCKET || "MISSING",
+  messagingSenderId: env.VITE_MESSAGING_SENDER_ID || "MISSING",
+  appId: env.VITE_APP_ID ? "****" : "MISSING",
+});
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, 'radi-molim-te');
@@ -104,5 +114,5 @@ async function testConnection() {
 testConnection();
 
 export { 
-  collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, addDoc, updateDoc, deleteDoc, Timestamp, onAuthStateChanged
+  collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, addDoc, updateDoc, deleteDoc, Timestamp, onAuthStateChanged, writeBatch
 };
