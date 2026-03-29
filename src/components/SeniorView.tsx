@@ -161,7 +161,7 @@ export default function SeniorView() {
             <Mic className="text-[#319795] w-12 h-12" />
           </div>
           <div>
-            <span className="text-4xl font-black block">Talk to Memora</span>
+            <span className="text-4xl font-black block">Talk to Assistant</span>
             <span className="text-xl text-[#718096]">I'm here to listen</span>
           </div>
         </motion.button>
@@ -404,7 +404,7 @@ function ChatAgentModal({ onClose }: { onClose: () => void }) {
       className="fixed inset-0 z-50 bg-white flex flex-col p-8"
     >
       <div className="flex justify-between items-center mb-12">
-        <h2 className="text-4xl font-black">Talking to Memora</h2>
+        <h2 className="text-4xl font-black">Talking to Assistant</h2>
         <button onClick={onClose} className="p-4 bg-[#F7FAFC] rounded-full"><XCircle size={48} /></button>
       </div>
 
