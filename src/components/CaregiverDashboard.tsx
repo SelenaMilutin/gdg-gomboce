@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { callGemini, AGENT_PROMPTS } from '../services/aiService';
 import { db, deleteDoc, doc, handleFirestoreError, OperationType, addDoc, collection } from '../firebase';
+import LocationMap from './LocationMap';
 
 export default function CaregiverDashboard() {
   const [activeTab, setActiveTab] = useState<'log' | 'routine' | 'ai' | 'location'>('log');
@@ -123,69 +124,30 @@ export default function CaregiverDashboard() {
 function LocationTab() {
   const { currentLocation, linkedSeniorProfile } = useApp();
 
-  if (!currentLocation) {
-    return (
-      <div className="flex flex-col items-center justify-center h-64 text-[#718096]">
-        <MapPin size={48} className="mb-4 opacity-20" />
-        <p>Location data not available</p>
-      </div>
-    );
-  }
-
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
       <div className="bg-white p-6 rounded-[32px] shadow-sm border border-[#E2E8F0]">
-        <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-          <MapPin size={20} className="text-[#5AB9B1]" />
-          Current Location
+        <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+          <MapPin size={24} className="text-[#5AB9B1]" />
+          {linkedSeniorProfile?.name?.split(' ')[0] || 'Senior'}'s Location
         </h2>
         
-        <div className="aspect-video bg-[#EDF2F7] rounded-2xl relative overflow-hidden flex items-center justify-center">
-          {/* Simple Map Visualization */}
-          <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'radial-gradient(#CBD5E0 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
-          <div className="relative z-10 flex flex-col items-center">
-            <motion.div 
-              animate={{ scale: [1, 1.2, 1] }}
-              transition={{ repeat: Infinity, duration: 2 }}
-              className="w-12 h-12 bg-[#5AB9B1] rounded-full flex items-center justify-center text-white shadow-lg"
-            >
-              <MapPin size={24} />
-            </motion.div>
-            <div className="mt-4 bg-white px-4 py-2 rounded-full shadow-md text-sm font-bold">
-              {linkedSeniorProfile?.name?.split(' ')[0] || 'Senior'} is here
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-6 space-y-4">
-          <div className="flex justify-between items-center p-4 bg-[#F7FAFC] rounded-2xl border border-[#EDF2F7]">
-            <span className="text-sm text-[#718096]">Coordinates</span>
-            <span className="text-sm font-mono font-bold">
-              {currentLocation.latitude.toFixed(4)}, {currentLocation.longitude.toFixed(4)}
-            </span>
-          </div>
-          <div className="flex justify-between items-center p-4 bg-[#F7FAFC] rounded-2xl border border-[#EDF2F7]">
-            <span className="text-sm text-[#718096]">Last Updated</span>
-            <span className="text-sm font-bold">
-              {currentLocation.lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </span>
-          </div>
-        </div>
-
-        <button 
-          onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${currentLocation.latitude},${currentLocation.longitude}`)}
-          className="w-full mt-6 bg-[#5AB9B1] text-white font-bold py-4 rounded-xl hover:bg-[#4A9D96] transition-colors flex items-center justify-center gap-2"
-        >
-          Open in Google Maps
-        </button>
+        <LocationMap 
+          location={currentLocation} 
+          isLive={false}
+          onRefresh={() => {
+            // TODO: Trigger location refresh from Firebase
+            console.log('Refresh location');
+          }}
+        />
       </div>
 
       <div className="bg-amber-50 border border-amber-100 p-6 rounded-[32px] flex gap-4">
         <AlertCircle className="text-amber-500 shrink-0" size={24} />
         <div>
-          <h4 className="font-bold text-amber-800 text-sm mb-1">Safety Tip</h4>
+          <h4 className="font-bold text-amber-800 text-sm mb-1">How It Works</h4>
           <p className="text-xs text-amber-700 leading-relaxed">
-            Location is updated every minute. If you notice unusual movement or the location hasn't updated in a while, consider calling {linkedSeniorProfile?.name?.split(' ')[0] || 'Senior'} or their emergency contact.
+            Location updates every minute while the senior is using their device. The map shows their current location relative to the center. Click "Open in Maps" to see real-world directions.
           </p>
         </div>
       </div>
