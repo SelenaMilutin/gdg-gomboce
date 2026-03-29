@@ -139,12 +139,11 @@ function Landing({
       className="w-full text-center"
     >
       <motion.div
-        initial={{ scale: 0.8, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ delay: 0.1 }}
-        className="w-24 h-24 bg-[#5AB9B1] rounded-[28px] flex items-center justify-center mb-8 shadow-2xl shadow-[#5AB9B1]/30 mx-auto"
-      >
-        <Heart className="text-white" size={48} fill="white" />
+  className="w-40 h-40 flex items-center justify-center mb-6 mx-auto overflow-hidden">
+  <img 
+    src="./hackathon_logo.png" 
+    className="w-full h-full object-contain"
+  />
       </motion.div>
 
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
