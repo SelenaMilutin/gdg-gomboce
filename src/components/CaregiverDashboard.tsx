@@ -557,7 +557,7 @@ function LinkSeniorUI() {
           borderRadius: 6, fontSize: 12, cursor: 'pointer'
         }}
       >
-        DEV LOGOUT
+        LOGOUT
       </button>
     )}
 

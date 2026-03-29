@@ -202,16 +202,16 @@ function Landing({
           )}
         </AnimatePresence>
 
-        <div className="flex items-center gap-3 text-[#CBD5E0] py-1">
+        {/* <div className="flex items-center gap-3 text-[#CBD5E0] py-1">
           <hr className="flex-1 border-[#E2E8F0]" />
           <span className="text-sm font-medium text-[#A0AEC0]">or try demo</span>
           <hr className="flex-1 border-[#E2E8F0]" />
-        </div>
+        </div> */}
 
-        <div className="grid grid-cols-2 gap-3">
+        {/* <div className="grid grid-cols-2 gap-3">
           <DemoButton icon="👵" label="As Senior"    sub="Simplified view" onClick={onDemoSenior}    borderColor="border-[#F6AD55]" hoverBg="hover:bg-[#FEF3C7]" />
           <DemoButton icon="🧑‍⚕️" label="As Caregiver" sub="Dashboard view" onClick={onDemoCaregiver} borderColor="border-[#63B3ED]" hoverBg="hover:bg-[#EBF8FF]" />
-        </div>
+        </div> */}
       </motion.div>
 
       <motion.p
@@ -547,7 +547,7 @@ function SeniorLinkingStep({ seniorData, setSeniorData, onBack, onSubmit }: any)
         </div>
       ) : (
         <div className="space-y-4">
-          <Input icon={<Link size={18} />} placeholder="Enter 6-digit link code" onChange={() => {}} />
+          <Input icon={<Link size={18} />} placeholder="Enter member's link code" onChange={() => {}} />
           <p className="text-xs text-[#A0AEC0] text-center px-4">Ask the senior or another caregiver for their linking code.</p>
         </div>
       )}

@@ -143,7 +143,7 @@ export default function SeniorView() {
           borderRadius: 6, fontSize: 12, cursor: 'pointer'
         }}
       >
-        DEV LOGOUT
+        LOGOUT
       </button>
     )}
       <header className="p-8 pt-12 text-center relative">
